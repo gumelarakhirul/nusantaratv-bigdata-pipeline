@@ -1,0 +1,61 @@
+
+# ==========================================
+# NUSANTARA TV - BIG DATA PIPELINE
+# ==========================================
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environment
+venv/
+.venv/
+env/
+ENV/
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Dataset hasil crawling dan ETL
+data/raw/
+data/processed/
+*.tmp
+
+# Logs
+logs/
+*.log
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+
+# Operating system
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# PostgreSQL backup
+*.sql.gz
+*.dump
+*.backup
+
+# Airflow local files
+airflow.db
+airflow.cfg
+airflow-webserver.pid
+standalone_admin_password.txt
+
+# Tableau temporary files
+*.twb~
+*.tmp
