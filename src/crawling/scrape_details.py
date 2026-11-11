@@ -21,7 +21,7 @@ INPUT_FILE = Path("data/raw/bronze_article_urls.json")
 OUTPUT_FILE = Path("data/raw/bronze_articles.json")
 ERROR_FILE = Path("data/raw/scraping_errors.json")
 
-MAX_ARTICLES = 5  # Uji 5 dahulu, kemudian ubah 200
+MAX_ARTICLES = 200
 REQUEST_DELAY = 3
 CHECKPOINT_EVERY = 5
 
