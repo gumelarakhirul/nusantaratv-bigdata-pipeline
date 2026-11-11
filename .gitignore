@@ -25,7 +25,7 @@ ENV/
 *.key
 
 # Dataset hasil crawling dan ETL
-data/raw/
+data/bronze/
 data/processed/
 *.tmp
 
