@@ -11,7 +11,6 @@ import time
 BASE_URL = "https://www.nusantaratv.com"
 LOADMORE_URL = BASE_URL + "/loadmore/load_data"
 
-START_ID = "145735"
 TARGET_ARTICLES = 200
 MAX_BATCHES = 20
 REQUEST_DELAY = 2
@@ -21,8 +20,8 @@ VALID_CATEGORIES = {
     "tekno", "showbiz", "kamutau", "opini"
 }
 
-OUTPUT_DIR = Path("data/raw")
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+BASE_DIR = Path(__file__).resolve().parents[2]
+OUTPUT_DIR = BASE_DIR / "data" / "bronze"
 
 
 def extract_articles(html):
@@ -74,6 +73,10 @@ def extract_articles(html):
 def get_next_id(html):
     soup = BeautifulSoup(html, "html.parser")
 
+    button = soup.select_one("#load_more_button[data-id]")
+    if button and str(button["data-id"]).isdigit():
+        return str(button["data-id"])
+
     ids = []
 
     for element in soup.select("[data-id], [id]"):
@@ -86,6 +89,7 @@ def get_next_id(html):
 
 
 def main():
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     session = requests.Session()
 
     session.headers.update({
@@ -96,7 +100,7 @@ def main():
 
     print("[1] Mengakses homepage...")
 
-    homepage = session.get(BASE_URL, timeout=30)
+    homepage = session.get(BASE_URL + "/news", timeout=30)
     homepage.raise_for_status()
 
     soup = BeautifulSoup(homepage.text, "html.parser")
@@ -119,8 +123,9 @@ def main():
 
     print("[OK] Session dan CSRF token siap")
 
+    # An empty cursor asks the site's AJAX endpoint for the latest batch.
     all_articles = {}
-    current_id = START_ID
+    current_id = ""
     used_ids = set()
 
     for batch in range(1, MAX_BATCHES + 1):
@@ -172,7 +177,7 @@ def main():
             print("ID berikutnya tidak valid.")
             break
 
-        if int(next_id) >= int(current_id):
+        if current_id and int(next_id) >= int(current_id):
             print("ID tidak menurun. Berhenti.")
             break
 
@@ -185,7 +190,10 @@ def main():
 
     output_file = OUTPUT_DIR / "bronze_article_urls.json"
 
-    output_file.write_text(
+    if not result:
+        raise RuntimeError("Crawler tidak menghasilkan artikel")
+    temp_file = output_file.with_suffix(".json.tmp")
+    temp_file.write_text(
         json.dumps(
             result,
             ensure_ascii=False,
@@ -193,6 +201,8 @@ def main():
         ),
         encoding="utf-8"
     )
+
+    temp_file.replace(output_file)
 
     print("\n" + "=" * 55)
     print("CRAWLING SELESAI")

@@ -247,19 +247,6 @@ def main():
             # 6. KEYWORD SILVER -> GOLD
             # ---------------------------------
 
-            cursor.execute("""
-                SELECT COUNT(*)
-                FROM silver.article_tokens
-            """)
-
-            total_silver_tokens = cursor.fetchone()[0]
-
-            if total_silver_tokens == 0:
-                raise ValueError(
-                    "silver.article_tokens kosong. "
-                    "Jalankan transform_silver.py dahulu."
-                )
-
             # Hapus keyword lama agar hasil Gold
             # sesuai dengan preprocessing terbaru.
             cursor.execute("""

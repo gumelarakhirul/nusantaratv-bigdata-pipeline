@@ -1,0 +1,8 @@
+# Airflow constraints select compatible versions independently of local Python.
+apache-airflow-providers-standard
+beautifulsoup4
+requests
+psycopg2-binary
+python-dotenv
+Sastrawi==1.0.1
+tzdata

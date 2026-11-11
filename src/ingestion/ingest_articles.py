@@ -42,27 +42,35 @@ def validate_article(article):
     if not isinstance(article, dict):
         return False, "Format artikel bukan object"
 
-    for field in REQUIRED_FIELDS:
-        if not article.get(field):
+    required = set(REQUIRED_FIELDS) | {"category"}
+    limits = {"article_id": 64, "category": 100, "author": 255}
+    for field in required | {"description", "author", "crawled_at"}:
+        value = article.get(field)
+        if value is None and field not in required:
+            continue
+        if not isinstance(value, str) or "\x00" in value:
+            return False, f"Field {field} harus berupa teks tanpa NUL"
+        if field in required and not value.strip():
             return False, f"Field {field} kosong"
+        if field in limits and len(value) > limits[field]:
+            return False, f"Field {field} terlalu panjang"
 
     for field in ["published_at", "crawled_at"]:
         value = article.get(field)
-
-        if value:
+        if value is not None:
             try:
-                datetime.fromisoformat(
-                    str(value).replace("Z", "+00:00")
-                )
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                if parsed.utcoffset() is None:
+                    return False, f"{field} harus memiliki timezone"
             except ValueError:
                 return False, f"Format {field} tidak valid"
 
-    try:
-        word_count = int(article.get("word_count") or 0)
-        if word_count < 0:
-            return False, "word_count negatif"
-    except (ValueError, TypeError):
-        return False, "word_count tidak valid"
+    value = article.get("word_count")
+    if value is not None and (
+        isinstance(value, bool) or not isinstance(value, int)
+        or not 0 <= value <= 2147483647
+    ):
+        return False, "word_count harus integer nonnegatif dalam batas PostgreSQL"
 
     return True, None
 
@@ -151,8 +159,7 @@ def main():
         print(f"[DITOLAK] Artikel #{index}: {error}")
 
     if not valid_articles:
-        print("Tidak ada artikel valid untuk dimasukkan.")
-        return
+        raise ValueError("Tidak ada artikel valid untuk dimasukkan")
 
     connection = get_connection()
 

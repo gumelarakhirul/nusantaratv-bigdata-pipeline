@@ -101,28 +101,64 @@ Dashboard Tableau direncanakan menampilkan:
 
 ```text
 nusantaratv-bigdata/
-├── config/
-├── dags/
-├── src/
-│   ├── crawling/
-│   ├── ingestion/
-│   ├── transformation/
-│   └── analytics/
-├── sql/
-│   ├── bronze/
-│   ├── staging/
-│   ├── silver/
-│   └── gold/
-├── data/
-│   ├── raw/
-│   └── processed/
-├── logs/
-├── tests/
-├── tableau/
-├── .gitignore
-├── requirements.txt
-└── README.md
+â”œâ”€â”€ config/
+â”œâ”€â”€ dags/
+â”œâ”€â”€ src/
+â”‚   â”œâ”€â”€ crawling/
+â”‚   â”œâ”€â”€ ingestion/
+â”‚   â”œâ”€â”€ transformation/
+â”‚   â””â”€â”€ analytics/
+â”œâ”€â”€ sql/
+â”‚   â”œâ”€â”€ bronze/
+â”‚   â”œâ”€â”€ staging/
+â”‚   â”œâ”€â”€ silver/
+â”‚   â””â”€â”€ gold/
+â”œâ”€â”€ data/
+â”‚   â”œâ”€â”€ raw/
+â”‚   â””â”€â”€ processed/
+â”œâ”€â”€ logs/
+â”œâ”€â”€ tests/
+â”œâ”€â”€ tableau/
+â”œâ”€â”€ .gitignore
+â”œâ”€â”€ requirements.txt
+â””â”€â”€ README.md
 ```
+
+## Menjalankan Pipeline
+
+Gunakan Python 3.10+ dan instal dependensi dengan `python -m pip install -r requirements.txt`.
+Siapkan `.env` berisi `DB_HOST`, `DB_PORT` (default `5433`), `DB_NAME`,
+`DB_USER`, dan `DB_PASSWORD`, lalu jalankan PostgreSQL dengan `docker compose up -d`.
+Buat tabel dengan menjalankan SQL staging, Silver, dan Gold sesuai nomor urut
+(di setiap layer); `sql/gold/02_analytics_dataset.sql` merupakan query analitik.
+
+Jalankan dari root proyek:
+
+```powershell
+python -m src.crawling.crawler
+python -m src.crawling.scrape_details
+python -m src.ingestion.ingest_articles
+python -m src.transformation.transform_silver
+python -m src.transformation.transform_gold
+```
+
+Crawler, scraper, dan ingestion menggunakan `data/bronze/` dengan path absolut
+berdasarkan lokasi proyek. Timestamp input harus menyertakan timezone.
+Silver membangun ulang token dari seluruh artikel Silver yang tersimpan dalam
+satu transaksi dengan pembaruan artikel. Artikel lama tetap dipertahankan bila
+input staging ditolak; token dihitung dari konten Silver terakhir yang valid.
+Gold menyegarkan keyword dari token Silver, termasuk ketika hasil token kosong.
+
+## Pengujian
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+Pengujian otomatis berjalan tanpa jaringan atau PostgreSQL, menggunakan mock
+untuk memeriksa commit/rollback dan refresh token. Pemeriksaan koneksi situs
+bersifat manual: `python tests/test_connection.py` dan
+`python tests/test_loadmore.py`.
 
 ## Project Status
 
@@ -130,12 +166,76 @@ nusantaratv-bigdata/
 |---|---|
 | Web Crawling | In development |
 | Bronze Data Storage | Initial implementation |
-| PostgreSQL Ingestion | Planned |
-| Silver Transformation | Planned |
-| Gold Star Schema | Planned |
-| Apache Airflow DAGs | Planned |
+| PostgreSQL Ingestion | Implemented |
+| Silver Transformation | Implemented |
+| Gold Star Schema | Implemented |
+| Apache Airflow DAGs | Implemented: four chained DAGs |
 | Tableau Dashboard | Planned |
 
 ## Disclaimer
 
 This project is developed for educational purposes. News content belongs to its respective publishers. Data collection should respect website access policies and applicable usage restrictions.
+
+## Otomatisasi Airflow (4 DAG)
+
+Airflow 3.3.1 memakai mode standalone dalam container Linux untuk proyek lokal.
+Database metadata Airflow terpisah dari warehouse; UI hanya dibuka di localhost.
+
+1. Pastikan Docker Desktop memakai Linux containers.
+2. Lengkapi `.env` sesuai `.env.example` tanpa menimpa konfigurasi database lama.
+   `AIRFLOW_DB_PASSWORD` harus acak alfanumerik agar dapat dipakai dalam URI.
+3. Jalankan:
+
+```powershell
+docker compose up -d --build
+```
+
+Buka http://localhost:18080 dan login sebagai `admin`. Password dibuat otomatis.
+Lihat secara lokal (jangan bagikan outputnya):
+
+```powershell
+docker compose exec airflow cat /opt/airflow/simple_auth_manager_passwords.json.generated
+```
+
+Unpause **keempat DAG**, kemudian trigger hanya `ntv_01_crawling`.
+DAG awal dijadwalkan setiap hari **07.00 WIB**, tanpa catchup.
+
+```text
+ntv_01_crawling        collect_urls -> scrape_details
+       |
+ntv_02_ingestion       initialize_schema -> ingest_articles
+       |
+ntv_03_transformation  transform_silver -> transform_gold
+       |
+ntv_04_analytics       validate_and_export
+```
+
+DAG induk menunggu seluruh rantai selesai sehingga run terjadwal berikutnya
+menunggu file Bronze selesai digunakan. Jangan trigger downstream secara
+terpisah selama rantai berjalan. Task pengolahan retry dua kali, jeda lima
+menit. Scraping tidak lengkap menyebabkan task gagal; retry melanjutkan
+checkpoint. Setelah memperbaiki kegagalan, clear task gagal pada DAG terkait.
+Clear task `trigger_next_dag` akan mereset run downstream terkait untuk diulang.
+
+Crawler memulai pagination dengan cursor kosong untuk batch terbaru, kemudian
+mengikuti tombol Load More. Maksimum 200 URL per run; pengambilan ini tidak
+menjamin semua berita di antara jadwal tercakup. Artikel tersimpan tidak
+diambil ulang. Ingestion membuat tabel yang belum ada tanpa menghapus data;
+perubahan struktur tabel lama tetap memerlukan migrasi tersendiri.
+
+Analytics memvalidasi artikel antarlayer, dimensi fakta, dan kesamaan keyword,
+lalu menghasilkan dua CSV UTF-8 untuk Tableau:
+
+- `data/processed/nusantaratv_analytics.csv`
+- `data/processed/nusantaratv_keywords.csv`
+
+Setiap CSV dipublikasikan melalui penggantian file atomik. Kedua CSV tidak
+diganti dalam satu transaksi filesystem. Refresh Tableau Server/Cloud belum
+termasuk otomatisasi ini.
+
+Validasi DAG di dalam container:
+
+```powershell
+docker compose exec airflow airflow dags list-import-errors
+docker compose exec airflow airflow dags list
+```

@@ -3,54 +3,59 @@ import requests
 from bs4 import BeautifulSoup
 from pathlib import Path
 
-# Konfigurasi
-BASE_URL = "https://www.nusantaratv.com/"
-OUTPUT_DIR = Path("data/raw")
 
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+def main():
+    # Konfigurasi
+    BASE_URL = "https://www.nusantaratv.com/"
+    OUTPUT_DIR = Path("data/raw")
 
-headers = {
-    "User-Agent": "Mozilla/5.0 (compatible; AcademicCrawler/1.0)"
-}
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-try:
-    print("=" * 50)
-    print("TEST CONNECTION - NUSANTARA TV")
-    print("=" * 50)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; AcademicCrawler/1.0)"
+    }
 
-    response = requests.get(
-        BASE_URL,
-        headers=headers,
-        timeout=30
-    )
+    try:
+        print("=" * 50)
+        print("TEST CONNECTION - NUSANTARA TV")
+        print("=" * 50)
 
-    print("Status Code :", response.status_code)
-    print("Final URL   :", response.url)
+        response = requests.get(
+            BASE_URL,
+            headers=headers,
+            timeout=30
+        )
 
-    response.raise_for_status()
+        print("Status Code :", response.status_code)
+        print("Final URL   :", response.url)
 
-    soup = BeautifulSoup(response.text, "html.parser")
+        response.raise_for_status()
 
-    title = soup.title.get_text(strip=True) if soup.title else "Tidak ditemukan"
+        soup = BeautifulSoup(response.text, "html.parser")
 
-    print("Page Title  :", title)
+        title = soup.title.get_text(strip=True) if soup.title else "Tidak ditemukan"
 
-    links = soup.find_all("a", href=True)
+        print("Page Title  :", title)
 
-    print("Total Links :", len(links))
+        links = soup.find_all("a", href=True)
 
-    # Menampilkan contoh link
-    print("\n10 Contoh Link:")
+        print("Total Links :", len(links))
 
-    for link in links[:10]:
-        print("-", link.get("href"))
+        # Menampilkan contoh link
+        print("\n10 Contoh Link:")
 
-    # Simpan HTML untuk inspeksi
-    output_file = OUTPUT_DIR / "homepage_test.html"
-    output_file.write_text(response.text, encoding="utf-8")
+        for link in links[:10]:
+            print("-", link.get("href"))
 
-    print("\nHTML berhasil disimpan:")
-    print(output_file)
+        # Simpan HTML untuk inspeksi
+        output_file = OUTPUT_DIR / "homepage_test.html"
+        output_file.write_text(response.text, encoding="utf-8")
 
-except requests.RequestException as error:
-    print("ERROR:", error)
+        print("\nHTML berhasil disimpan:")
+        print(output_file)
+
+    except requests.RequestException as error:
+        print("ERROR:", error)
+
+if __name__ == "__main__":
+    main()

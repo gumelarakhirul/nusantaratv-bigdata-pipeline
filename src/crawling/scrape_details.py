@@ -10,25 +10,26 @@ from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from article_parser import parse_article
+if __package__:
+    from .article_parser import parse_article
+else:
+    from article_parser import parse_article
 
 
 # ==================================================
 # KONFIGURASI
 # ==================================================
 
-INPUT_FILE = Path("data/raw/bronze_article_urls.json")
-OUTPUT_FILE = Path("data/raw/bronze_articles.json")
-ERROR_FILE = Path("data/raw/scraping_errors.json")
+BASE_DIR = Path(__file__).resolve().parents[2]
+BRONZE_DIR = BASE_DIR / "data" / "bronze"
+INPUT_FILE = BRONZE_DIR / "bronze_article_urls.json"
+OUTPUT_FILE = BRONZE_DIR / "bronze_articles.json"
+ERROR_FILE = BRONZE_DIR / "scraping_errors.json"
 
 MAX_ARTICLES = 200
 REQUEST_DELAY = 3
 CHECKPOINT_EVERY = 5
 
-OUTPUT_FILE.parent.mkdir(
-    parents=True,
-    exist_ok=True
-)
 
 
 # ==================================================
@@ -100,6 +101,9 @@ def create_session():
 # ==================================================
 
 def main():
+    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if not INPUT_FILE.exists():
+        raise FileNotFoundError(f"File URL Bronze tidak ditemukan: {INPUT_FILE}")
     articles = load_json(INPUT_FILE, [])
     existing = load_json(OUTPUT_FILE, [])
 
@@ -117,6 +121,8 @@ def main():
         if item.get("article_id")
     }
 
+    if not articles:
+        raise ValueError("Daftar URL Bronze kosong")
     session = create_session()
 
     target_articles = articles[:MAX_ARTICLES]
@@ -276,6 +282,9 @@ def main():
         )
         print("Output:", OUTPUT_FILE)
         print("=" * 60)
+
+    if successful != len(target_articles):
+        raise RuntimeError("Scraping belum lengkap; retry akan melanjutkan checkpoint")
 
 
 if __name__ == "__main__":

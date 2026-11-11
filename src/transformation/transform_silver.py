@@ -42,13 +42,6 @@ stopwords.update(custom_stopwords)
 
 MIN_WORD_LENGTH = 3
 
-# Normalisasi hasil stemming yang berpotensi
-# mengubah makna kata penting.
-stem_corrections = {
-    "perintah": "pemerintah"
-}
-
-
 # =========================================
 # 1. DATA CLEANING
 # =========================================
@@ -63,15 +56,13 @@ def clean_field(value):
 
 
 def parse_datetime(value):
-    if isinstance(value, datetime):
-        return value
-
-    if not value:
-        raise ValueError("Tanggal kosong")
-
-    return datetime.fromisoformat(
-        str(value).replace("Z", "+00:00")
-    )
+    if not isinstance(value, datetime):
+        if not value:
+            raise ValueError("Tanggal kosong")
+        value = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if value.utcoffset() is None:
+        raise ValueError("Tanggal harus memiliki timezone")
+    return value
 
 
 def transform_article(article):
@@ -166,6 +157,9 @@ def remove_stopwords(tokens):
 
 @lru_cache(maxsize=50000)
 def stem_word(word):
+    # Preserve meaning before stemming conflates these distinct words.
+    if word in {"perintah", "pemerintah", "pemerintahan"}:
+        return "pemerintah" if word != "perintah" else "perintah"
     return stemmer.stem(word)
 
 
@@ -191,12 +185,6 @@ def preprocess(text):
 
     # Stemming
     tokens = stemming(tokens)
-
-    # Koreksi hasil stemming
-    tokens = [
-        stem_corrections.get(token, token)
-        for token in tokens
-    ]
 
     # Stopword removal setelah stemming
     tokens = remove_stopwords(tokens)
@@ -320,15 +308,19 @@ def main():
 
             print("\nMemulai NLP Preprocessing...")
 
+            # Rebuild from all persisted Silver articles, including older rows.
+            cursor.execute("SELECT article_id, content FROM silver.articles ORDER BY article_id")
+            nlp_articles = cursor.fetchall()
+
             token_rows = []
             total_tokens = 0
             empty_articles = 0
 
             for index, article in enumerate(
-                valid_rows, start=1
+                nlp_articles, start=1
             ):
                 article_id = article[0]
-                content = article[2]
+                content = article[1]
 
                 tokens = preprocess(content)
                 frequencies = Counter(tokens)
@@ -346,7 +338,7 @@ def main():
                     ))
 
                 print(
-                    f"[{index}/{len(valid_rows)}] "
+                    f"[{index}/{len(nlp_articles)}] "
                     f"Tokens: {len(tokens)} | "
                     f"Unique: {len(frequencies)}",
                     flush=True
