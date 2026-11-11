@@ -2,8 +2,15 @@
 import re
 import sys
 from pathlib import Path
+from datetime import datetime
+from collections import Counter
+from functools import lru_cache
 
 from psycopg2.extras import execute_batch
+from Sastrawi.Stemmer.StemmerFactory import StemmerFactory
+from Sastrawi.StopWordRemover.StopWordRemoverFactory import (
+    StopWordRemoverFactory
+)
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BASE_DIR))
@@ -11,20 +18,63 @@ sys.path.insert(0, str(BASE_DIR))
 from config.database import get_connection
 
 
-def clean_text(value):
+# =========================================
+# KONFIGURASI NLP
+# =========================================
+
+stemmer = StemmerFactory().create_stemmer()
+
+stopwords = set(
+    StopWordRemoverFactory().get_stop_words()
+)
+
+# Stopword tambahan khusus analisis berita
+custom_stopwords = {
+    "ujar", "kata", "ungkap", "tutur",
+    "jelas", "sebut", "imbuh",
+    "jadi", "laku", "lalu", "hingga",
+    "lebih", "butuh", "jumlah",
+    "nusantaratv", "com", "www",
+    "baca", "artikel", "berita"
+}
+
+stopwords.update(custom_stopwords)
+
+MIN_WORD_LENGTH = 3
+
+# Normalisasi hasil stemming yang berpotensi
+# mengubah makna kata penting.
+stem_corrections = {
+    "perintah": "pemerintah"
+}
+
+
+# =========================================
+# 1. DATA CLEANING
+# =========================================
+
+def clean_field(value):
     if value is None:
-        return None
+        return ""
 
-    text = re.sub(r"\s+", " ", str(value)).strip()
-    return text or None
-
-
-def normalize_category(value):
-    text = clean_text(value)
-    return text.lower() if text else None
+    return re.sub(
+        r"\s+", " ", str(value)
+    ).strip()
 
 
-def transform_article(row):
+def parse_datetime(value):
+    if isinstance(value, datetime):
+        return value
+
+    if not value:
+        raise ValueError("Tanggal kosong")
+
+    return datetime.fromisoformat(
+        str(value).replace("Z", "+00:00")
+    )
+
+
+def transform_article(article):
     (
         article_id,
         title,
@@ -34,25 +84,35 @@ def transform_article(row):
         author,
         published_at,
         article_url,
-        crawled_at,
-    ) = row
+        crawled_at
+    ) = article
 
-    title = clean_text(title)
-    content = clean_text(content)
-    description = clean_text(description)
-    category = normalize_category(category)
-    author = clean_text(author)
-    article_url = clean_text(article_url)
+    article_id = clean_field(article_id)
+    title = clean_field(title)
+    content = clean_field(content)
+    description = clean_field(description)
+    category = clean_field(category).lower()
+    author = clean_field(author)
+    article_url = clean_field(article_url)
 
     if not all([
         article_id,
         title,
         content,
         category,
-        published_at,
         article_url,
+        published_at
     ]):
-        return None
+        raise ValueError(
+            "Kolom wajib tidak lengkap"
+        )
+
+    published_at = parse_datetime(published_at)
+
+    crawled_at = (
+        parse_datetime(crawled_at)
+        if crawled_at else None
+    )
 
     word_count = len(content.split())
 
@@ -60,84 +120,270 @@ def transform_article(row):
         article_id,
         title,
         content,
-        description,
+        description or None,
         category,
-        author,
+        author or None,
         published_at,
         article_url,
         crawled_at,
-        word_count,
+        word_count
     )
 
 
-UPSERT_SQL = """
-INSERT INTO silver.articles (
-    article_id, title, content, description,
-    category, author, published_at, article_url,
-    crawled_at, word_count
-)
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-ON CONFLICT (article_id)
-DO UPDATE SET
-    title = EXCLUDED.title,
-    content = EXCLUDED.content,
-    description = EXCLUDED.description,
-    category = EXCLUDED.category,
-    author = EXCLUDED.author,
-    published_at = EXCLUDED.published_at,
-    article_url = EXCLUDED.article_url,
-    crawled_at = EXCLUDED.crawled_at,
-    word_count = EXCLUDED.word_count,
-    transformed_at = CURRENT_TIMESTAMP;
-"""
+# =========================================
+# 2. NLP PREPROCESSING
+# =========================================
 
+def case_folding(text):
+    return (text or "").lower()
+
+
+def clean_nlp_text(text):
+    text = re.sub(
+        r"https?://\S+|www\.\S+",
+        " ",
+        text
+    )
+
+    text = re.sub(r"[^a-z\s]", " ", text)
+    text = re.sub(r"\s+", " ", text)
+
+    return text.strip()
+
+
+def tokenize(text):
+    return text.split()
+
+
+def remove_stopwords(tokens):
+    return [
+        token
+        for token in tokens
+        if token not in stopwords
+        and len(token) >= MIN_WORD_LENGTH
+    ]
+
+
+@lru_cache(maxsize=50000)
+def stem_word(word):
+    return stemmer.stem(word)
+
+
+def stemming(tokens):
+    return [
+        stem_word(token)
+        for token in tokens
+    ]
+
+
+def preprocess(text):
+    # Case folding
+    text = case_folding(text)
+
+    # Text cleaning
+    text = clean_nlp_text(text)
+
+    # Tokenization
+    tokens = tokenize(text)
+
+    # Stopword removal sebelum stemming
+    tokens = remove_stopwords(tokens)
+
+    # Stemming
+    tokens = stemming(tokens)
+
+    # Koreksi hasil stemming
+    tokens = [
+        stem_corrections.get(token, token)
+        for token in tokens
+    ]
+
+    # Stopword removal setelah stemming
+    tokens = remove_stopwords(tokens)
+
+    return [
+        token
+        for token in tokens
+        if len(token) <= 100
+    ]
+
+
+# =========================================
+# 3. TRANSFORM SILVER PIPELINE
+# =========================================
 
 def main():
-    print("=" * 60)
-    print("TRANSFORMATION STAGING -> SILVER")
+    print("\n" + "=" * 60)
+    print("TRANSFORM SILVER: CLEANING + NLP")
     print("=" * 60)
 
     conn = get_connection()
 
     try:
         with conn.cursor() as cursor:
+
+            # ---------------------------------
+            # A. AMBIL DATA STAGING
+            # ---------------------------------
+
             cursor.execute("""
                 SELECT
-                    article_id, title, content, description,
-                    category, author, published_at,
-                    article_url, crawled_at
+                    article_id,
+                    title,
+                    content,
+                    description,
+                    category,
+                    author,
+                    published_at,
+                    article_url,
+                    crawled_at
                 FROM staging.articles
+                ORDER BY article_id
             """)
-            rows = cursor.fetchall()
 
-            transformed = []
-            rejected = []
+            articles = cursor.fetchall()
 
-            for row in rows:
-                result = transform_article(row)
-
-                if result is None:
-                    rejected.append(row[0])
-                else:
-                    transformed.append(result)
-
-            if transformed:
-                execute_batch(
-                    cursor,
-                    UPSERT_SQL,
-                    transformed,
-                    page_size=100,
+            if not articles:
+                raise ValueError(
+                    "staging.articles kosong"
                 )
 
-            conn.commit()
+            print(f"Total staging: {len(articles)}")
 
-            cursor.execute("SELECT COUNT(*) FROM silver.articles")
-            total_silver = cursor.fetchone()[0]
+            # ---------------------------------
+            # B. DATA CLEANING
+            # ---------------------------------
 
-        print(f"Total staging : {len(rows)}")
-        print(f"Data valid    : {len(transformed)}")
-        print(f"Data ditolak  : {len(rejected)}")
-        print(f"Total silver  : {total_silver}")
+            valid_rows = []
+            rejected = 0
+
+            for article in articles:
+                try:
+                    valid_rows.append(
+                        transform_article(article)
+                    )
+                except (ValueError, TypeError) as error:
+                    rejected += 1
+                    print(
+                        f"[DITOLAK] {article[0]}: {error}"
+                    )
+
+            if not valid_rows:
+                raise ValueError(
+                    "Tidak ada artikel valid"
+                )
+
+            execute_batch(
+                cursor,
+                """
+                INSERT INTO silver.articles (
+                    article_id,
+                    title,
+                    content,
+                    description,
+                    category,
+                    author,
+                    published_at,
+                    article_url,
+                    crawled_at,
+                    word_count
+                )
+                VALUES (
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s
+                )
+                ON CONFLICT (article_id)
+                DO UPDATE SET
+                    title = EXCLUDED.title,
+                    content = EXCLUDED.content,
+                    description = EXCLUDED.description,
+                    category = EXCLUDED.category,
+                    author = EXCLUDED.author,
+                    published_at = EXCLUDED.published_at,
+                    article_url = EXCLUDED.article_url,
+                    crawled_at = EXCLUDED.crawled_at,
+                    word_count = EXCLUDED.word_count,
+                    transformed_at = CURRENT_TIMESTAMP
+                """,
+                valid_rows,
+                page_size=100
+            )
+
+            print(
+                f"Cleaning berhasil: {len(valid_rows)} artikel"
+            )
+            print(f"Data ditolak: {rejected}")
+
+            # ---------------------------------
+            # C. NLP PREPROCESSING
+            # ---------------------------------
+
+            print("\nMemulai NLP Preprocessing...")
+
+            token_rows = []
+            total_tokens = 0
+            empty_articles = 0
+
+            for index, article in enumerate(
+                valid_rows, start=1
+            ):
+                article_id = article[0]
+                content = article[2]
+
+                tokens = preprocess(content)
+                frequencies = Counter(tokens)
+
+                total_tokens += len(tokens)
+
+                if not tokens:
+                    empty_articles += 1
+
+                for token, frequency in frequencies.items():
+                    token_rows.append((
+                        article_id,
+                        token,
+                        frequency
+                    ))
+
+                print(
+                    f"[{index}/{len(valid_rows)}] "
+                    f"Tokens: {len(tokens)} | "
+                    f"Unique: {len(frequencies)}",
+                    flush=True
+                )
+
+            # Refresh hasil NLP.
+            cursor.execute("""
+                DELETE FROM silver.article_tokens
+            """)
+
+            if token_rows:
+                execute_batch(
+                    cursor,
+                    """
+                    INSERT INTO silver.article_tokens (
+                        article_id,
+                        token,
+                        frequency
+                    )
+                    VALUES (%s, %s, %s)
+                    """,
+                    token_rows,
+                    page_size=500
+                )
+
+        # Cleaning dan NLP berhasil bersama-sama
+        # atau keduanya di-rollback jika terjadi error.
+        conn.commit()
+
+        print("\n" + "=" * 60)
+        print("TRANSFORM SILVER BERHASIL")
+        print("=" * 60)
+        print(f"Artikel valid       : {len(valid_rows)}")
+        print(f"Artikel ditolak     : {rejected}")
+        print(f"Total token NLP     : {total_tokens}")
+        print(f"Baris article_tokens: {len(token_rows)}")
+        print(f"Artikel tanpa token : {empty_articles}")
         print("=" * 60)
 
     except Exception:
