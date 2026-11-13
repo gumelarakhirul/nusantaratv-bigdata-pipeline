@@ -1,344 +1,174 @@
 # Nusantara TV Big Data Pipeline
 
-End-to-end Big Data pipeline for collecting, processing, storing, and analyzing news articles from [Nusantara TV](https://www.nusantaratv.com/).
-
-## Project Overview
-
-Proyek ini bertujuan membangun sistem pengolahan data berita secara terstruktur, mulai dari pengambilan data melalui web crawling hingga penyajian informasi menggunakan dashboard interaktif.
-
-Pipeline dirancang menggunakan Python, Requests, BeautifulSoup, PostgreSQL, Apache Airflow, dan Tableau.
-
-## System Architecture
+Proyek pengolahan berita Nusantara TV: mengambil artikel, menyimpannya di
+PostgreSQL Neon, membersihkan data dan token NLP, lalu mengekspor CSV untuk Tableau.
 
 ```text
-Nusantara TV Website
-         |
-         v
-DAG 1: Crawling
-Python + Requests + BeautifulSoup
-         |
-         v
-Bronze Layer
-Raw JSON
-         |
-         v
-DAG 2: Ingestion
-Validation + PostgreSQL Staging
-         |
-         v
-DAG 3: Transformation
-Cleaning + Deduplication
-         |
-         v
-Silver Layer
-Cleaned Data
-         |
-         v
-Gold Layer
-Star Schema
-         |
-         v
-DAG 4: Analytics
-Aggregation + Analytical Queries
-         |
-         v
-Tableau Dashboard
+Website -> Crawling -> JSON Bronze -> Staging -> Silver -> Gold -> CSV -> Tableau
+                                      Database Neon
 ```
 
-## Technology Stack
+## 1. Persiapan
 
-| Technology | Purpose |
-|---|---|
-| Python | Data processing and ETL |
-| Requests | HTTP requests |
-| BeautifulSoup | HTML parsing |
-| PostgreSQL | Data storage and warehouse |
-| Apache Airflow | Workflow orchestration |
-| Tableau | Data visualization |
-| Git & GitHub | Version control |
+Siapkan Docker Desktop dengan Linux containers, koneksi internet, dan database
+PostgreSQL di Neon. Python lokal tidak diperlukan jika menjalankan pipeline
+melalui Docker. Node.js dan Neon CLI juga tidak diperlukan.
 
-## Data Collection
-
-Data berita yang dikumpulkan meliputi:
-
-- Article ID
-- Title
-- Content
-- Category
-- Author
-- Publication Date
-- Article URL
-- Crawling Timestamp
-- Word Count
-
-Nama penulis diambil dari informasi penulis artikel yang tersedia pada halaman. Artikel tanpa informasi penulis tetap dapat disimpan dengan nilai `NULL`.
-
-## Data Warehouse
-
-Data warehouse menggunakan pendekatan **Star Schema**.
-
-**Fact Table:**
-- `fact_articles`
-
-**Dimension Tables:**
-- `dim_date`
-- `dim_category`
-- `dim_author`
-
-Model ini dirancang untuk mendukung analisis tren berita berdasarkan tanggal, kategori, waktu publikasi, dan penulis.
-
-## Data Analytics & Visualization
-
-Dashboard Tableau direncanakan menampilkan:
-
-1. Daily News Publication Trends
-2. News Distribution by Category
-3. Publication Activity by Day and Hour
-4. Top 10 News Authors
-5. Most Frequent Keywords
-
-## Project Structure
-
-```text
-nusantaratv-bigdata/
-|-- config/                   # Koneksi database
-|-- dags/                     # Definisi 4 DAG Airflow
-|-- docker/                   # Dockerfile dan dependensi Airflow
-|-- src/
-|   |-- crawling/             # URL dan detail artikel
-|   |-- ingestion/            # Inisialisasi schema dan ingestion
-|   |-- transformation/       # Silver dan Gold
-|   `-- analytics/            # Validasi dan ekspor CSV
-|-- sql/
-|   |-- staging/
-|   |-- silver/
-|   `-- gold/
-|-- data/
-|   |-- bronze/               # JSON hasil crawling
-|   `-- processed/            # CSV untuk Tableau
-|-- tableau/                  # Workbook dashboard
-|-- .env.example
-|-- docker-compose.yml
-|-- requirements.txt
-`-- README.md
-```
-
-## Menjalankan Pipeline
-
-Gunakan Python 3.10+ dan instal dependensi dengan `python -m pip install -r requirements.txt`.
-Siapkan `.env` mengikuti `.env.example`: isi URL PostgreSQL Neon dan password
-metadata Airflow. Warehouse memakai Neon saja; tidak ada fallback database lokal.
-Buat tabel dengan `python -m src.ingestion.initialize_schema` (database sudah
-tersedia di Neon). Docker Compose menjalankan Airflow dan database metadatanya.
-
-Jalankan dari root proyek:
+Clone repository dan buka terminal di folder proyek:
 
 ```powershell
-python -m src.crawling.crawler
-python -m src.crawling.scrape_details
-python -m src.ingestion.ingest_articles
-python -m src.transformation.transform_silver
-python -m src.transformation.transform_gold
+git clone <URL_REPOSITORY>
+cd nusantaratv-bigdata
 ```
 
-Crawler, scraper, dan ingestion menggunakan `data/bronze/` dengan path absolut
-berdasarkan lokasi proyek. Timestamp input harus menyertakan timezone.
-Silver membangun ulang token dari seluruh artikel Silver yang tersimpan dalam
-satu transaksi dengan pembaruan artikel. Artikel lama tetap dipertahankan bila
-input staging ditolak; token dihitung dari konten Silver terakhir yang valid.
-Gold menyegarkan keyword dari token Silver, termasuk ketika hasil token kosong.
+## 2. Jalankan Docker dan Airflow
 
-## Project Status
-
-| Component | Status |
-|---|---|
-| Web Crawling | Implemented |
-| Bronze Data Storage | Implemented |
-| PostgreSQL Ingestion | Implemented |
-| Silver Transformation | Implemented |
-| Gold Star Schema | Implemented |
-| Apache Airflow DAGs | Implemented: four chained DAGs |
-| Tableau Dashboard | Workbook tersedia di tableau/ |
-
-## Disclaimer
-
-This project is developed for educational purposes. News content belongs to its respective publishers. Data collection should respect website access policies and applicable usage restrictions.
-
-## Otomatisasi Airflow (4 DAG)
-
-Airflow 3.3.1 memakai mode standalone dalam container Linux untuk proyek lokal.
-Database metadata Airflow terpisah dari warehouse; UI hanya dibuka di localhost.
-
-1. Pastikan Docker Desktop memakai Linux containers.
-2. Lengkapi `.env` sesuai `.env.example` tanpa menimpa konfigurasi database lama.
-   Tentukan `AIRFLOW_DB_PASSWORD` dan `AIRFLOW_ADMIN_PASSWORD` sendiri.
-3. Jalankan:
+Buka Docker Desktop, lalu jalankan:
 
 ```powershell
 docker compose up -d --build
 ```
 
-Buka http://localhost:18080, login sebagai `admin` menggunakan
-`AIRFLOW_ADMIN_PASSWORD` dari `.env`.
+Docker menjalankan dua layanan:
 
-Unpause **keempat DAG**, kemudian trigger hanya `ntv_01_crawling`.
-DAG awal dijadwalkan setiap hari **07.00 WIB**, tanpa catchup.
-
-```text
-ntv_01_crawling        collect_urls -> scrape_details
-       |
-ntv_02_ingestion       initialize_schema -> ingest_articles
-       |
-ntv_03_transformation  transform_silver -> transform_gold
-       |
-ntv_04_analytics       validate_and_export
-```
-
-DAG induk menunggu seluruh rantai selesai sehingga run terjadwal berikutnya
-menunggu file Bronze selesai digunakan. Jangan trigger downstream secara
-terpisah selama rantai berjalan. Task pengolahan retry dua kali, jeda lima
-menit. Scraping tidak lengkap menyebabkan task gagal; retry melanjutkan
-checkpoint. Setelah memperbaiki kegagalan, clear task gagal pada DAG terkait.
-Clear task `trigger_next_dag` akan mereset run downstream terkait untuk diulang.
-
-Crawler memulai pagination dengan cursor kosong untuk batch terbaru, kemudian
-mengikuti tombol Load More. Maksimum 200 URL per run; pengambilan ini tidak
-menjamin semua berita di antara jadwal tercakup. Artikel tersimpan tidak
-diambil ulang. Ingestion membuat tabel yang belum ada tanpa menghapus data;
-perubahan struktur tabel lama tetap memerlukan migrasi tersendiri.
-
-Analytics memvalidasi artikel antarlayer, dimensi fakta, dan kesamaan keyword,
-lalu menghasilkan dua CSV UTF-8 untuk Tableau:
-
-- `data/processed/nusantaratv_analytics.csv`
-- `data/processed/nusantaratv_keywords.csv`
-
-Setiap CSV dipublikasikan melalui penggantian file atomik. Kedua CSV tidak
-diganti dalam satu transaksi filesystem. Refresh Tableau Server/Cloud belum
-termasuk otomatisasi ini.
-
-Validasi DAG di dalam container:
-
-```powershell
-docker compose exec airflow airflow dags list-import-errors
-docker compose exec airflow airflow dags list
-```
-
-## Memperbarui data di Tableau
-
-Airflow memperbarui kedua CSV di `data/processed` secara otomatis.
-Tableau menggunakan CSV tersebut; setelah pipeline selesai, pilih
-**Data -> nusantaratv_analytics -> Refresh** dan
-**Data -> nusantaratv_keywords -> Refresh**. Refresh Tableau dilakukan manual.
-
-## Pylance dan dependensi DAG
-
-Python lokal dipakai untuk script pipeline. Airflow, provider,
-dan Pendulum tersedia di image Docker Airflow, sehingga interpreter Windows
-lokal tidak dapat menyelesaikan import DAG tersebut.
-
-Peringatan import DAG dari Pylance lokal dapat muncul karena dependensi
-berada di Docker. Validasi import DAG dilakukan dalam container dengan
-`docker compose exec airflow airflow dags list-import-errors`.
-
-Untuk analisis lengkap dan autocomplete DAG, gunakan VS Code yang terhubung ke
-container Airflow melalui Dev Containers.
-
-## Fungsi masing-masing file
-
-| File | Fungsi |
+| Layanan | Fungsi |
 |---|---|
-| `README.md` | Panduan instalasi, menjalankan pipeline, Airflow, dan refresh Tableau. |
-| `.env` | Konfigurasi dan password lokal; tidak masuk Git. |
-| `.env.example` | Contoh variabel konfigurasi tanpa password asli. |
-| `.gitignore` | Mengecualikan rahasia, dataset, cache, dan file sementara dari Git. |
-| `.dockerignore` | Membatasi file yang dikirim saat build image Airflow. |
-| `requirements.txt` | Dependensi script Python yang dijalankan lokal. |
-| `docker-compose.yml` | Menjalankan Airflow dan database metadata internalnya. |
-| `docker/airflow.Dockerfile` | Membangun image Airflow beserta dependensi pipeline. |
-| `docker/requirements-airflow.txt` | Dependensi pipeline di container, mengikuti constraints Airflow. |
-| `config/database.py` | Membuka koneksi SSL warehouse Neon dari `.env`. |
-| `config/start_airflow.py` | Menyinkronkan password metadata/login dari environment dan memulai Airflow. |
-| `dags/news_pipeline.py` | Mendefinisikan empat DAG, jadwal, retry, dan pemicu antartahap. |
-| `src/crawling/crawler.py` | Mengumpulkan URL artikel dari pagination situs. |
-| `src/crawling/article_parser.py` | Mengekstrak isi dan metadata dari HTML artikel. |
-| `src/crawling/scrape_details.py` | Mengambil halaman artikel, retry, dan menyimpan checkpoint JSON. |
-| `src/ingestion/initialize_schema.py` | Menjalankan SQL pembuatan schema dan tabel yang belum ada. |
-| `src/ingestion/ingest_articles.py` | Memvalidasi JSON Bronze dan upsert artikel ke staging. |
-| `src/transformation/transform_silver.py` | Membersihkan artikel, menghitung kata, dan membuat token NLP. |
-| `src/transformation/transform_gold.py` | Mengisi dimensi, fakta artikel, dan keyword Gold. |
-| `src/analytics/export_analytics.py` | Memeriksa konsistensi warehouse dan mengekspor dua CSV Tableau. |
-| `sql/staging/01_create_schemas.sql` | Membuat schema staging, Silver, dan Gold. |
-| `sql/staging/02_create_articles.sql` | Membuat tabel artikel staging. |
-| `sql/silver/01_create_articles.sql` | Membuat tabel artikel bersih. |
-| `sql/silver/02_create_article_tokens.sql` | Membuat tabel token, frekuensi, dan relasinya ke artikel Silver. |
-| `sql/gold/01_create_star_schema.sql` | Membuat dimensi tanggal, kategori, penulis, dan fakta artikel. |
-| `sql/gold/02_analytics_dataset.sql` | Query gabungan fakta dan dimensi untuk ekspor analytics; dipakai exporter. |
-| `sql/gold/03_create_article_keywords.sql` | Membuat tabel keyword Gold dan relasinya ke fakta artikel. |
-| `data/bronze/bronze_article_urls.json` | Daftar URL input untuk scraper detail. |
-| `data/bronze/bronze_articles.json` | Detail artikel serta checkpoint untuk ingestion. |
-| `data/bronze/scraping_errors.json` | Catatan artikel gagal agar bisa ditelusuri dan dicoba lagi. |
-| `data/processed/nusantaratv_analytics.csv` | Sumber grafik artikel, KPI, kategori, penulis, dan heatmap. |
-| `data/processed/nusantaratv_keywords.csv` | Sumber visualisasi keyword. |
-| `tableau/Tableau Big Data.twb` | Definisi worksheet, kalkulasi, koneksi CSV, dan dashboard Tableau. |
+| `airflow` | Menjalankan dan menjadwalkan pipeline. |
+| `airflow-db` | Menyimpan metadata internal Airflow, bukan data berita. |
 
-Database tersimpan dalam Docker volume, bukan folder `data`. File `.twb`
-menyimpan definisi dashboard dan merujuk CSV; jangan menghapus CSV sumbernya.
+Data berita berada di **Neon**. Metadata Airflow berada di **Docker volume**.
 
-## Setup tabel manual di Neon
+Buka **http://localhost:18080** (sesuaikan jika port diubah), lalu login:
 
-Database dibuat melalui Neon Console. Hubungkan SQL editor ke
-database Neon, lalu jalankan file staging, Silver, dan Gold sesuai urutannya.
-`sql/gold/02_analytics_dataset.sql` adalah SELECT untuk ekspor, bukan DDL.
+- Username: `admin`
+- Password: nilai `AIRFLOW_ADMIN_PASSWORD` pada `.env`
 
-## Database bersama di Neon
+Tunggu startup selesai jika dashboard belum dapat dibuka.
 
-Proyek memakai Python/Airflow dan koneksi Neon dari `.env`; Node.js, npm,
-dan Neon CLI tidak diperlukan untuk menjalankan pipeline. Untuk menjalankan layanan,
-gunakan `docker compose up -d --build`.
+## 3. Jalankan pipeline
 
-Isi connection string dari menu Connect Neon ke `DATABASE_URL` dalam `.env`.
-Pertahankan parameter SSL. Untuk ETL/DDL, sebaiknya gunakan URL direct (matikan
-Connection pooling saat menyalin). Cukup gunakan satu variabel `DATABASE_URL`;
-ganti nilainya jika berpindah database/branch.
-Driver tetap psycopg2. URL wajib tersedia dan SSL wajib aktif; tidak ada fallback
-ke `DB_*` lokal. `.env.local` tidak dibaca. Environment proses mengalahkan `.env`.
+Di menu **Dags**, unpause keempat DAG. Untuk menjalankan sekarang, trigger
+**hanya `ntv_01_crawling`**. DAG berikutnya dipicu otomatis secara berurutan.
 
-Airflow membaca `.env` melalui env_file. Setelah mengganti URL, jalankan
-`docker compose up -d airflow` untuk memuat environment terbaru. `airflow-db`
-hanya menyimpan jadwal dan riwayat DAG; semua data berita ada di Neon.
-Container warehouse PostgreSQL lokal tidak lagi digunakan. Volume lamanya
-tidak dihapus agar data lama tetap dapat dipulihkan.
+| DAG | Proses | Hasil |
+|---|---|---|
+| `ntv_01_crawling` | Mengambil URL dan detail artikel. | JSON di `data/bronze/`. |
+| `ntv_02_ingestion` | Membuat tabel yang belum ada, validasi, dan upsert artikel. | `staging.articles` di Neon. |
+| `ntv_03_transformation` | Cleaning, NLP, dan pembentukan star schema. | Tabel Silver dan Gold di Neon. |
+| `ntv_04_analytics` | Memeriksa konsistensi data dan mengekspor hasil. | Dua CSV di `data/processed/`. |
 
-Hanya satu Airflow utama menjalankan jadwal. Laptop anggota dapat terhubung ke
-Neon menggunakan akun database masing-masing. Jangan commit file `.env`.
-CSV tetap berada di laptop exporter; Tableau tetap membaca CSV lokal dan
-memerlukan refresh manual.
+Setelah seluruh rantai selesai, run keempat DAG akan berstatus **Success**.
+Status **Deferred** pada task pemicu berarti menunggu DAG berikutnya selesai.
+Jika gagal, buka task yang merah lalu baca **Logs** sebelum menjalankan ulang.
 
-## Password Airflow pilihan sendiri
+Jadwal otomatis adalah **setiap hari pukul 07.00 WIB**. Komputer, Docker Desktop,
+container, dan koneksi internet perlu aktif. Jangan trigger DAG 02-04 sendiri
+saat rantai berjalan karena proses dapat saling tumpang tindih.
 
-Isi di `.env` (jangan gunakan teks contoh sebagai password):
+Crawler mengambil maksimal 200 URL per run. Artikel detail yang sudah tersimpan
+dilewati; total data dapat bertambah pada run berikutnya. Pengambilan ini tidak
+menjamin seluruh publikasi situs tercakup. Tabel yang sudah ada tidak dihapus
+saat inisialisasi; perubahan struktur tabel lama memerlukan migrasi tersendiri.
 
-```dotenv
-AIRFLOW_ADMIN_PASSWORD="password_login_pilihanmu"
-AIRFLOW_DB_PASSWORD="password_database_pilihanmu"
-```
+## 4. Buka hasil di Tableau
 
-Gunakan tanda kutip tunggal pada nilai dotenv jika password mengandung `$`.
-Keduanya berbeda dari password Neon dan boleh ditetapkan sendiri. Password
-login admin ditulis ke file Simple Auth Manager setiap startup. Password
-metadata di-encode sebagai URI agar karakter khusus tetap didukung.
+Pipeline menghasilkan:
 
-Setelah mengedit dan menyimpan `.env`, jalankan:
+| File | Digunakan untuk |
+|---|---|
+| `data/processed/nusantaratv_analytics.csv` | KPI, tren tanggal, kategori, penulis, dan heatmap hari/jam. |
+| `data/processed/nusantaratv_keywords.csv` | Frekuensi keyword untuk treemap atau grafik keyword. |
+
+Buka `tableau/Tableau Big Data.twb`. Jika Tableau tidak menemukan CSV setelah
+clone atau pindah laptop, arahkan koneksi kedua sumber data ke file CSV di
+folder `data/processed` milik laptop tersebut.
+
+Setelah DAG analytics selesai, refresh kedua sumber melalui menu Tableau:
+
+- **Data -> nusantaratv_analytics -> Refresh**
+- **Data -> nusantaratv_keywords -> Refresh**
+
+Ekspor CSV otomatis, tetapi **refresh Tableau dilakukan manual**. Grafik tidak
+perlu dibuat ulang. Workbook `.twb` menyimpan definisi dashboard; CSV sumbernya
+tetap dibutuhkan. Folder data tidak ikut Git dan akan diisi pipeline.
+
+## Mengubah konfigurasi dan mengecek layanan
+
+Setelah mengganti URL Neon atau password Airflow di `.env`, simpan lalu jalankan:
 
 ```powershell
 docker compose up -d
 ```
 
-Startup Airflow otomatis memperbarui password role metadata melalui Unix socket
-lokal yang dibagikan hanya ke container Airflow dan metadata PostgreSQL.
-Kemudian login admin memakai password dari environment. Tidak perlu menjalankan
-script password terpisah. Tidak ada port metadata PostgreSQL yang dipublikasikan.
-Jadwal dan riwayat tidak dihapus. Terapkan perubahan saat tidak ada task aktif.
-Perubahan `.env` tidak dimuat otomatis oleh container yang masih berjalan;
-gunakan `up -d`, bukan hanya `restart`.
+Konfigurasi baru dimuat saat container dibuat ulang. Startup menyinkronkan
+password metadata dan login admin; tidak perlu script password terpisah.
+Terapkan perubahan ketika tidak ada task aktif. `docker compose restart` saja
+tidak memuat nilai environment baru.
+
+Perintah pemeriksaan:
+
+```powershell
+docker compose ps
+docker compose exec airflow airflow dags list-import-errors
+docker compose exec airflow airflow dags list
+```
+
+Untuk menghentikan layanan tanpa menghapus data:
+
+```powershell
+docker compose stop
+```
+
+Hindari `docker compose down -v` jika ingin mempertahankan metadata dan riwayat
+Airflow, karena opsi `-v` menghapus volume yang dikelola Compose.
+
+## Pemakaian bersama tim
+
+Semua anggota dapat mengakses database Neon yang sama melalui koneksi untuk
+akun masing-masing. Cukup **satu Airflow utama** menjalankan jadwal pipeline;
+jangan aktifkan scheduler di semua laptop untuk warehouse yang sama.
+
+CSV berada di laptop yang menjalankan exporter. Anggota yang memakai Tableau
+perlu menerima CSV terbaru atau mengekspornya dari Neon. Akses Neon yang sama
+tidak otomatis membagikan dashboard Airflow maupun CSV lokal.
+
+## Struktur dan fungsi file
+
+| Lokasi | Fungsi |
+|---|---|
+| `config/database.py` | Membuka koneksi SSL ke Neon dari `DATABASE_URL`. |
+| `config/start_airflow.py` | Mengatur password dari environment dan memulai Airflow. |
+| `dags/news_pipeline.py` | Definisi empat DAG, jadwal, retry, dan urutan proses. |
+| `docker-compose.yml` | Layanan Airflow, metadata PostgreSQL, jaringan, dan volume. |
+| `docker/airflow.Dockerfile` | Image Airflow beserta dependensi pipeline. |
+| `docker/requirements-airflow.txt` | Dependensi Python di container. |
+| `requirements.txt` | Dependensi jika menjalankan script lewat Python lokal. |
+| `src/crawling/crawler.py` | Mengumpulkan URL artikel. |
+| `src/crawling/article_parser.py` | Mengambil isi dan metadata dari HTML artikel. |
+| `src/crawling/scrape_details.py` | Scraping detail, retry, checkpoint, dan catatan error. |
+| `src/ingestion/initialize_schema.py` | Membuat schema dan tabel yang belum ada. |
+| `src/ingestion/ingest_articles.py` | Memvalidasi Bronze dan mengisi staging. |
+| `src/transformation/transform_silver.py` | Cleaning artikel dan pemrosesan token NLP. |
+| `src/transformation/transform_gold.py` | Mengisi dimensi, fakta, dan keyword Gold. |
+| `src/analytics/export_analytics.py` | Validasi warehouse dan ekspor CSV. |
+| `sql/staging/` | DDL schema dan tabel staging. |
+| `sql/silver/` | DDL artikel bersih dan token. |
+| `sql/gold/` | DDL star schema, keyword, dan query analytics untuk ekspor. |
+| `data/bronze/` | Daftar URL, detail artikel, dan error scraping. |
+| `data/processed/` | CSV hasil ekspor untuk Tableau. |
+| `tableau/Tableau Big Data.twb` | Worksheet, kalkulasi, dan dashboard Tableau. |
+| `.env.example` | Template konfigurasi tanpa kredensial asli. |
+| `.gitignore` | Mengecualikan rahasia, data, dan cache dari Git. |
+| `.dockerignore` | Membatasi file yang dikirim saat build image. |
+
+Untuk SQL manual, buat database melalui Neon Console, lalu jalankan DDL staging,
+Silver, dan Gold sesuai urutan dependensinya. Biasanya tidak perlu dilakukan
+manual karena DAG ingestion sudah menjalankan `initialize_schema.py`.
+`sql/gold/02_analytics_dataset.sql` adalah query SELECT, bukan pembuatan tabel.
+
+Jika Pylance menandai import Airflow/Pendulum tidak ditemukan pada Windows,
+dependensi tersebut tersedia di container Airflow. Gunakan perintah pemeriksaan
+DAG di atas untuk memverifikasi import pada lingkungan yang menjalankannya.
+
+Proyek ini dibuat untuk pendidikan. Konten berita merupakan milik penerbitnya;
+pengambilan data perlu mengikuti kebijakan akses situs.
