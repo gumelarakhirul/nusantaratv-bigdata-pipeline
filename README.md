@@ -239,3 +239,10 @@ Validasi DAG di dalam container:
 docker compose exec airflow airflow dags list-import-errors
 docker compose exec airflow airflow dags list
 ```
+
+## Memperbarui data di Tableau
+
+Airflow memperbarui kedua CSV di `data/processed` secara otomatis.
+Tableau menggunakan CSV tersebut; setelah pipeline selesai, pilih
+**Data -> nusantaratv_analytics -> Refresh** dan
+**Data -> nusantaratv_keywords -> Refresh**. Refresh Tableau dilakukan manual.
