@@ -2,28 +2,6 @@
 name: nusantaratv-bigdata
 
 services:
-  postgres:
-    image: postgres:17
-    container_name: nusantaratv-postgres
-    restart: unless-stopped
-
-    environment:
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: ${DB_NAME}
-
-    ports:
-      - "127.0.0.1:5433:5432"
-
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   airflow-db:
     image: postgres:17
     restart: unless-stopped
@@ -33,6 +11,7 @@ services:
       POSTGRES_DB: airflow
     volumes:
       - airflow_db_data:/var/lib/postgresql/data
+      - airflow_db_socket:/var/run/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
       interval: 10s
@@ -46,7 +25,10 @@ services:
       context: .
       dockerfile: docker/airflow.Dockerfile
     restart: unless-stopped
-    command: standalone
+    command: ["python", "/opt/project/config/start_airflow.py"]
+    env_file:
+      - path: .env
+        required: false
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
@@ -54,31 +36,24 @@ services:
       AIRFLOW__CORE__PARALLELISM: "8"
       AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: "admin:admin"
       AIRFLOW__CORE__DEFAULT_TIMEZONE: Asia/Jakarta
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${AIRFLOW_DB_PASSWORD}@airflow-db:5432/airflow
       AIRFLOW__CORE__DAGS_FOLDER: /opt/project/dags
       PYTHONPATH: /opt/project
-      DB_HOST: postgres
-      DB_PORT: "5432"
-      DB_NAME: ${DB_NAME}
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
     ports:
       - "127.0.0.1:${AIRFLOW_UI_PORT:-18080}:8080"
     volumes:
       - airflow_home:/opt/airflow
+      - airflow_db_socket:/var/run/airflow-postgres
       - ./dags:/opt/project/dags:ro
       - ./src:/opt/project/src:ro
       - ./config:/opt/project/config:ro
       - ./sql:/opt/project/sql:ro
       - ./data:/opt/project/data
     depends_on:
-      postgres:
-        condition: service_healthy
       airflow-db:
         condition: service_healthy
 
 
 volumes:
-  postgres_data:
   airflow_db_data:
+  airflow_db_socket:
   airflow_home:

@@ -1,8 +1,9 @@
-
+"""Warehouse connections use Neon URLs supplied through .env."""
 import os
 from pathlib import Path
 
 import psycopg2
+from psycopg2.extensions import parse_dsn
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -10,11 +11,11 @@ load_dotenv(BASE_DIR / ".env")
 
 
 def get_connection():
-    return psycopg2.connect(
-        host=os.getenv("DB_HOST", "localhost"),
-        port=int(os.getenv("DB_PORT", "5433")),
-        dbname=os.getenv("DB_NAME", "nusantaratv_dw"),
-        user=os.getenv("DB_USER", "postgres"),
-        password=os.environ["DB_PASSWORD"],
-        connect_timeout=10,
-    )
+    # Direct URL is preferred for DDL and long-running batch ETL.
+    database_url = (os.getenv("DATABASE_URL_UNPOOLED") or os.getenv("DATABASE_URL") or "").strip()
+    if not database_url:
+        raise ValueError("Isi DATABASE_URL atau DATABASE_URL_UNPOOLED Neon di .env")
+    sslmode = parse_dsn(database_url).get("sslmode", "require")
+    if sslmode not in {"require", "verify-ca", "verify-full"}:
+        raise ValueError("Koneksi warehouse Neon harus menggunakan SSL")
+    return psycopg2.connect(database_url, connect_timeout=30, sslmode=sslmode)

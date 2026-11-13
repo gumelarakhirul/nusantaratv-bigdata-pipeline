@@ -127,10 +127,10 @@ nusantaratv-bigdata/
 ## Menjalankan Pipeline
 
 Gunakan Python 3.10+ dan instal dependensi dengan `python -m pip install -r requirements.txt`.
-Siapkan `.env` berisi `DB_HOST`, `DB_PORT` (default `5433`), `DB_NAME`,
-`DB_USER`, dan `DB_PASSWORD`, lalu jalankan PostgreSQL dengan `docker compose up -d`.
-Buat tabel dengan menjalankan SQL staging, Silver, dan Gold sesuai nomor urut
-(di setiap layer); `sql/gold/02_analytics_dataset.sql` merupakan query analitik.
+Siapkan `.env` mengikuti `.env.example`: isi URL PostgreSQL Neon dan password
+metadata Airflow. Warehouse memakai Neon saja; tidak ada fallback database lokal.
+Buat tabel dengan `python -m src.ingestion.initialize_schema` (database sudah
+tersedia di Neon). Docker Compose menjalankan Airflow dan database metadatanya.
 
 Jalankan dari root proyek:
 
@@ -181,19 +181,15 @@ Database metadata Airflow terpisah dari warehouse; UI hanya dibuka di localhost.
 
 1. Pastikan Docker Desktop memakai Linux containers.
 2. Lengkapi `.env` sesuai `.env.example` tanpa menimpa konfigurasi database lama.
-   `AIRFLOW_DB_PASSWORD` harus acak alfanumerik agar dapat dipakai dalam URI.
+   Tentukan `AIRFLOW_DB_PASSWORD` dan `AIRFLOW_ADMIN_PASSWORD` sendiri.
 3. Jalankan:
 
 ```powershell
 docker compose up -d --build
 ```
 
-Buka http://localhost:18080 dan login sebagai `admin`. Password dibuat otomatis.
-Lihat secara lokal (jangan bagikan outputnya):
-
-```powershell
-docker compose exec airflow cat /opt/airflow/simple_auth_manager_passwords.json.generated
-```
+Buka http://localhost:18080, login sebagai `admin` menggunakan
+`AIRFLOW_ADMIN_PASSWORD` dari `.env`.
 
 Unpause **keempat DAG**, kemudian trigger hanya `ntv_01_crawling`.
 DAG awal dijadwalkan setiap hari **07.00 WIB**, tanpa catchup.
@@ -268,10 +264,11 @@ container Airflow melalui Dev Containers.
 | `.gitignore` | Mengecualikan rahasia, dataset, cache, dan file sementara dari Git. |
 | `.dockerignore` | Membatasi file yang dikirim saat build image Airflow. |
 | `requirements.txt` | Dependensi script Python yang dijalankan lokal. |
-| `docker-compose.yml` | Menjalankan warehouse PostgreSQL, database metadata, dan Airflow. |
+| `docker-compose.yml` | Menjalankan Airflow dan database metadata internalnya. |
 | `docker/airflow.Dockerfile` | Membangun image Airflow beserta dependensi pipeline. |
 | `docker/requirements-airflow.txt` | Dependensi pipeline di container, mengikuti constraints Airflow. |
-| `config/database.py` | Membaca konfigurasi dan membuka koneksi PostgreSQL. |
+| `config/database.py` | Membuka koneksi SSL warehouse Neon dari `.env`. |
+| `config/start_airflow.py` | Menyinkronkan password metadata/login dari environment dan memulai Airflow. |
 | `dags/news_pipeline.py` | Mendefinisikan empat DAG, jadwal, retry, dan pemicu antartahap. |
 | `src/crawling/crawler.py` | Mengumpulkan URL artikel dari pagination situs. |
 | `src/crawling/article_parser.py` | Mengekstrak isi dan metadata dari HTML artikel. |
@@ -290,6 +287,8 @@ container Airflow melalui Dev Containers.
 | `sql/gold/03_create_article_keywords.sql` | Membuat tabel keyword Gold dan relasinya ke fakta artikel. |
 | `tests/test_pipeline.py` | Menguji validasi, NLP, timezone, refresh token, dan transaksi. |
 | `tests/test_automation.py` | Menguji cursor crawling, kegagalan scraping, dan validasi/ekspor analytics. |
+| `tests/test_database.py` | Menguji pemilihan URL Neon dan kewajiban SSL. |
+| `tests/test_airflow_passwords.py` | Menguji konfigurasi password, encoding URI, dan transaksi sinkronisasi metadata. |
 | `data/bronze/bronze_article_urls.json` | Daftar URL input untuk scraper detail. |
 | `data/bronze/bronze_articles.json` | Detail artikel serta checkpoint untuk ingestion. |
 | `data/bronze/scraping_errors.json` | Catatan artikel gagal agar bisa ditelusuri dan dicoba lagi. |
@@ -300,22 +299,61 @@ container Airflow melalui Dev Containers.
 Database tersimpan dalam Docker volume, bukan folder `data`. File `.twb`
 menyimpan definisi dashboard dan merujuk CSV; jangan menghapus CSV sumbernya.
 
-## Setup database manual melalui SQL
+## Setup tabel manual di Neon
 
-Di pgAdmin atau aplikasi SQL lain, buka Query Tool pada database `postgres`.
-Jalankan `sql/00_create_database.sql` untuk membuat `nusantaratv_dw`.
-Lewati CREATE DATABASE bila database sudah ada. Sesuaikan nama database
-jika `DB_NAME` di `.env` berbeda.
+Database dibuat melalui Neon Console. Hubungkan SQL editor ke
+database Neon, lalu jalankan file staging, Silver, dan Gold sesuai urutannya.
+`sql/gold/02_analytics_dataset.sql` adalah SELECT untuk ekspor, bukan DDL.
 
-Pindahkan koneksi Query Tool ke `nusantaratv_dw`, lalu jalankan:
+## Database bersama di Neon
 
-1. `sql/staging/01_create_schemas.sql`
-2. `sql/staging/02_create_articles.sql`
-3. `sql/silver/01_create_articles.sql`
-4. `sql/silver/02_create_article_tokens.sql`
-5. `sql/gold/01_create_star_schema.sql`
-6. `sql/gold/03_create_article_keywords.sql`
+Proyek memakai Python/Airflow dan koneksi Neon dari `.env`; Node.js, npm,
+dan Neon CLI tidak diperlukan untuk menjalankan pipeline. Untuk verifikasi,
+gunakan `python -m unittest discover -s tests -v`. Untuk menjalankan layanan,
+gunakan `docker compose up -d --build`.
 
-Semua file memakai SQL biasa. `sql/gold/02_analytics_dataset.sql` adalah
-query SELECT untuk analisis dan ekspor, bukan pembuatan tabel.
-Setup manual ini tidak mengubah inisialisasi tabel yang sudah dipakai DAG.
+Isi connection string dari menu Connect Neon ke `DATABASE_URL` dalam `.env`.
+Pertahankan parameter SSL. Untuk ETL/DDL, sebaiknya gunakan URL direct (matikan
+Connection pooling saat menyalin). Opsional `DATABASE_URL_UNPOOLED` diprioritaskan
+jika diisi; ganti kedua URL bersama-sama jika berpindah database/branch.
+Driver tetap psycopg2. URL wajib tersedia dan SSL wajib aktif; tidak ada fallback
+ke `DB_*` lokal. `.env.local` tidak dibaca. Environment proses mengalahkan `.env`.
+
+Airflow membaca `.env` melalui env_file. Setelah mengganti URL, jalankan
+`docker compose up -d airflow` untuk memuat environment terbaru. `airflow-db`
+hanya menyimpan jadwal dan riwayat DAG; semua data berita ada di Neon.
+Container warehouse PostgreSQL lokal tidak lagi digunakan. Volume lamanya
+tidak dihapus agar data lama tetap dapat dipulihkan.
+
+Hanya satu Airflow utama menjalankan jadwal. Laptop anggota dapat terhubung ke
+Neon menggunakan akun database masing-masing. Jangan commit file `.env`.
+CSV tetap berada di laptop exporter; Tableau tetap membaca CSV lokal dan
+memerlukan refresh manual.
+
+## Password Airflow pilihan sendiri
+
+Isi di `.env` (jangan gunakan teks contoh sebagai password):
+
+```dotenv
+AIRFLOW_ADMIN_PASSWORD="password_login_pilihanmu"
+AIRFLOW_DB_PASSWORD="password_database_pilihanmu"
+```
+
+Gunakan tanda kutip tunggal pada nilai dotenv jika password mengandung `$`.
+Keduanya berbeda dari password Neon dan boleh ditetapkan sendiri. Password
+login admin ditulis ke file Simple Auth Manager setiap startup. Password
+metadata di-encode sebagai URI agar karakter khusus tetap didukung.
+
+Setelah mengedit dan menyimpan `.env`, jalankan:
+
+```powershell
+docker compose up -d
+```
+
+Startup Airflow otomatis memperbarui password role metadata melalui Unix socket
+lokal yang dibagikan hanya ke container Airflow dan metadata PostgreSQL.
+Kemudian login admin memakai password dari environment. Tidak perlu menjalankan
+script password terpisah. Tidak ada port metadata PostgreSQL yang dipublikasikan.
+Jadwal dan riwayat tidak dihapus. Terapkan perubahan saat tidak ada task aktif.
+Perubahan `.env` tidak dimuat otomatis oleh container yang masih berjalan;
+gunakan `up -d`, bukan hanya `restart`.

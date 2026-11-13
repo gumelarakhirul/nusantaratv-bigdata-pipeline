@@ -59,3 +59,7 @@ standalone_admin_password.txt
 # Tableau temporary files
 *.twb~
 *.tmp
+.neon
+
+# Node tooling used by Neon CLI
+node_modules/
