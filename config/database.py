@@ -12,9 +12,9 @@ load_dotenv(BASE_DIR / ".env")
 
 def get_connection():
     # Direct URL is preferred for DDL and long-running batch ETL.
-    database_url = (os.getenv("DATABASE_URL_UNPOOLED") or os.getenv("DATABASE_URL") or "").strip()
+    database_url = (os.getenv("DATABASE_URL") or "").strip()
     if not database_url:
-        raise ValueError("Isi DATABASE_URL atau DATABASE_URL_UNPOOLED Neon di .env")
+        raise ValueError("Isi DATABASE_URL Neon di .env")
     sslmode = parse_dsn(database_url).get("sslmode", "require")
     if sslmode not in {"require", "verify-ca", "verify-full"}:
         raise ValueError("Koneksi warehouse Neon harus menggunakan SSL")

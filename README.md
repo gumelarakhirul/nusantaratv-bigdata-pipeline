@@ -117,7 +117,6 @@ nusantaratv-bigdata/
 |   |-- bronze/               # JSON hasil crawling
 |   `-- processed/            # CSV untuk Tableau
 |-- tableau/                  # Workbook dashboard
-|-- tests/                    # Pengujian otomatis tanpa jaringan
 |-- .env.example
 |-- docker-compose.yml
 |-- requirements.txt
@@ -148,15 +147,6 @@ Silver membangun ulang token dari seluruh artikel Silver yang tersimpan dalam
 satu transaksi dengan pembaruan artikel. Artikel lama tetap dipertahankan bila
 input staging ditolak; token dihitung dari konten Silver terakhir yang valid.
 Gold menyegarkan keyword dari token Silver, termasuk ketika hasil token kosong.
-
-## Pengujian
-
-```powershell
-python -m unittest discover -s tests -v
-```
-
-Pengujian otomatis berjalan tanpa jaringan atau PostgreSQL, menggunakan mock
-untuk memeriksa validasi, commit/rollback, refresh token, crawling, dan ekspor CSV.
 
 ## Project Status
 
@@ -243,7 +233,7 @@ Tableau menggunakan CSV tersebut; setelah pipeline selesai, pilih
 
 ## Pylance dan dependensi DAG
 
-Python lokal dipakai untuk script pipeline dan pengujian. Airflow, provider,
+Python lokal dipakai untuk script pipeline. Airflow, provider,
 dan Pendulum tersedia di image Docker Airflow, sehingga interpreter Windows
 lokal tidak dapat menyelesaikan import DAG tersebut.
 
@@ -258,7 +248,7 @@ container Airflow melalui Dev Containers.
 
 | File | Fungsi |
 |---|---|
-| `README.md` | Panduan instalasi, menjalankan pipeline, Airflow, pengujian, dan refresh Tableau. |
+| `README.md` | Panduan instalasi, menjalankan pipeline, Airflow, dan refresh Tableau. |
 | `.env` | Konfigurasi dan password lokal; tidak masuk Git. |
 | `.env.example` | Contoh variabel konfigurasi tanpa password asli. |
 | `.gitignore` | Mengecualikan rahasia, dataset, cache, dan file sementara dari Git. |
@@ -285,10 +275,6 @@ container Airflow melalui Dev Containers.
 | `sql/gold/01_create_star_schema.sql` | Membuat dimensi tanggal, kategori, penulis, dan fakta artikel. |
 | `sql/gold/02_analytics_dataset.sql` | Query gabungan fakta dan dimensi untuk ekspor analytics; dipakai exporter. |
 | `sql/gold/03_create_article_keywords.sql` | Membuat tabel keyword Gold dan relasinya ke fakta artikel. |
-| `tests/test_pipeline.py` | Menguji validasi, NLP, timezone, refresh token, dan transaksi. |
-| `tests/test_automation.py` | Menguji cursor crawling, kegagalan scraping, dan validasi/ekspor analytics. |
-| `tests/test_database.py` | Menguji pemilihan URL Neon dan kewajiban SSL. |
-| `tests/test_airflow_passwords.py` | Menguji konfigurasi password, encoding URI, dan transaksi sinkronisasi metadata. |
 | `data/bronze/bronze_article_urls.json` | Daftar URL input untuk scraper detail. |
 | `data/bronze/bronze_articles.json` | Detail artikel serta checkpoint untuk ingestion. |
 | `data/bronze/scraping_errors.json` | Catatan artikel gagal agar bisa ditelusuri dan dicoba lagi. |
@@ -308,14 +294,13 @@ database Neon, lalu jalankan file staging, Silver, dan Gold sesuai urutannya.
 ## Database bersama di Neon
 
 Proyek memakai Python/Airflow dan koneksi Neon dari `.env`; Node.js, npm,
-dan Neon CLI tidak diperlukan untuk menjalankan pipeline. Untuk verifikasi,
-gunakan `python -m unittest discover -s tests -v`. Untuk menjalankan layanan,
+dan Neon CLI tidak diperlukan untuk menjalankan pipeline. Untuk menjalankan layanan,
 gunakan `docker compose up -d --build`.
 
 Isi connection string dari menu Connect Neon ke `DATABASE_URL` dalam `.env`.
 Pertahankan parameter SSL. Untuk ETL/DDL, sebaiknya gunakan URL direct (matikan
-Connection pooling saat menyalin). Opsional `DATABASE_URL_UNPOOLED` diprioritaskan
-jika diisi; ganti kedua URL bersama-sama jika berpindah database/branch.
+Connection pooling saat menyalin). Cukup gunakan satu variabel `DATABASE_URL`;
+ganti nilainya jika berpindah database/branch.
 Driver tetap psycopg2. URL wajib tersedia dan SSL wajib aktif; tidak ada fallback
 ke `DB_*` lokal. `.env.local` tidak dibaca. Environment proses mengalahkan `.env`.
 
