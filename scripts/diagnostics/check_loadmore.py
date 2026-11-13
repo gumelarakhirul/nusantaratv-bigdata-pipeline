@@ -10,7 +10,7 @@ def main():
     BASE_URL = "https://www.nusantaratv.com"
     LOADMORE_URL = f"{BASE_URL}/loadmore/load_data"
 
-    OUTPUT_DIR = Path("data/raw")
+    OUTPUT_DIR = Path(__file__).resolve().parents[2] / "data" / "diagnostics"
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     # ID dari pengujian DevTools.

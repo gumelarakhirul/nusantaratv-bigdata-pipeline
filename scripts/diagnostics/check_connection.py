@@ -7,7 +7,7 @@ from pathlib import Path
 def main():
     # Konfigurasi
     BASE_URL = "https://www.nusantaratv.com/"
-    OUTPUT_DIR = Path("data/raw")
+    OUTPUT_DIR = Path(__file__).resolve().parents[2] / "data" / "diagnostics"
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 

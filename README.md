@@ -101,27 +101,29 @@ Dashboard Tableau direncanakan menampilkan:
 
 ```text
 nusantaratv-bigdata/
-â”œâ”€â”€ config/
-â”œâ”€â”€ dags/
-â”œâ”€â”€ src/
-â”‚   â”œâ”€â”€ crawling/
-â”‚   â”œâ”€â”€ ingestion/
-â”‚   â”œâ”€â”€ transformation/
-â”‚   â””â”€â”€ analytics/
-â”œâ”€â”€ sql/
-â”‚   â”œâ”€â”€ bronze/
-â”‚   â”œâ”€â”€ staging/
-â”‚   â”œâ”€â”€ silver/
-â”‚   â””â”€â”€ gold/
-â”œâ”€â”€ data/
-â”‚   â”œâ”€â”€ raw/
-â”‚   â””â”€â”€ processed/
-â”œâ”€â”€ logs/
-â”œâ”€â”€ tests/
-â”œâ”€â”€ tableau/
-â”œâ”€â”€ .gitignore
-â”œâ”€â”€ requirements.txt
-â””â”€â”€ README.md
+|-- config/                   # Koneksi database
+|-- dags/                     # Definisi 4 DAG Airflow
+|-- docker/                   # Dockerfile dan dependensi Airflow
+|-- scripts/diagnostics/       # Pemeriksaan jaringan manual
+|-- src/
+|   |-- crawling/             # URL dan detail artikel
+|   |-- ingestion/            # Inisialisasi schema dan ingestion
+|   |-- transformation/       # Silver dan Gold
+|   `-- analytics/            # Validasi dan ekspor CSV
+|-- sql/
+|   |-- staging/
+|   |-- silver/
+|   `-- gold/
+|-- data/
+|   |-- bronze/               # JSON hasil crawling
+|   |-- processed/            # CSV untuk Tableau
+|   `-- diagnostics/          # HTML pemeriksaan manual (dibuat saat dipakai)
+|-- tableau/                  # Workbook dan dokumentasi visualisasi
+|-- tests/                    # Pengujian otomatis tanpa jaringan
+|-- .env.example
+|-- docker-compose.yml
+|-- requirements.txt
+`-- README.md
 ```
 
 ## Menjalankan Pipeline
@@ -157,8 +159,8 @@ python -m unittest discover -s tests -v
 
 Pengujian otomatis berjalan tanpa jaringan atau PostgreSQL, menggunakan mock
 untuk memeriksa commit/rollback dan refresh token. Pemeriksaan koneksi situs
-bersifat manual: `python tests/test_connection.py` dan
-`python tests/test_loadmore.py`.
+bersifat manual: `python scripts/diagnostics/check_connection.py` dan
+`python scripts/diagnostics/check_loadmore.py`.
 
 ## Project Status
 
