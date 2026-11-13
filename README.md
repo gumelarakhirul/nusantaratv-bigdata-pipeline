@@ -104,7 +104,6 @@ nusantaratv-bigdata/
 |-- config/                   # Koneksi database
 |-- dags/                     # Definisi 4 DAG Airflow
 |-- docker/                   # Dockerfile dan dependensi Airflow
-|-- scripts/diagnostics/       # Pemeriksaan jaringan manual
 |-- src/
 |   |-- crawling/             # URL dan detail artikel
 |   |-- ingestion/            # Inisialisasi schema dan ingestion
@@ -116,9 +115,8 @@ nusantaratv-bigdata/
 |   `-- gold/
 |-- data/
 |   |-- bronze/               # JSON hasil crawling
-|   |-- processed/            # CSV untuk Tableau
-|   `-- diagnostics/          # HTML pemeriksaan manual (dibuat saat dipakai)
-|-- tableau/                  # Workbook dan dokumentasi visualisasi
+|   `-- processed/            # CSV untuk Tableau
+|-- tableau/                  # Workbook dashboard
 |-- tests/                    # Pengujian otomatis tanpa jaringan
 |-- .env.example
 |-- docker-compose.yml
@@ -158,21 +156,19 @@ python -m unittest discover -s tests -v
 ```
 
 Pengujian otomatis berjalan tanpa jaringan atau PostgreSQL, menggunakan mock
-untuk memeriksa commit/rollback dan refresh token. Pemeriksaan koneksi situs
-bersifat manual: `python scripts/diagnostics/check_connection.py` dan
-`python scripts/diagnostics/check_loadmore.py`.
+untuk memeriksa validasi, commit/rollback, refresh token, crawling, dan ekspor CSV.
 
 ## Project Status
 
 | Component | Status |
 |---|---|
-| Web Crawling | In development |
-| Bronze Data Storage | Initial implementation |
+| Web Crawling | Implemented |
+| Bronze Data Storage | Implemented |
 | PostgreSQL Ingestion | Implemented |
 | Silver Transformation | Implemented |
 | Gold Star Schema | Implemented |
 | Apache Airflow DAGs | Implemented: four chained DAGs |
-| Tableau Dashboard | Planned |
+| Tableau Dashboard | Workbook tersedia di tableau/ |
 
 ## Disclaimer
 
@@ -248,3 +244,78 @@ Airflow memperbarui kedua CSV di `data/processed` secara otomatis.
 Tableau menggunakan CSV tersebut; setelah pipeline selesai, pilih
 **Data -> nusantaratv_analytics -> Refresh** dan
 **Data -> nusantaratv_keywords -> Refresh**. Refresh Tableau dilakukan manual.
+
+## Pylance dan dependensi DAG
+
+Python lokal dipakai untuk script pipeline dan pengujian. Airflow, provider,
+dan Pendulum tersedia di image Docker Airflow, sehingga interpreter Windows
+lokal tidak dapat menyelesaikan import DAG tersebut.
+
+Peringatan import DAG dari Pylance lokal dapat muncul karena dependensi
+berada di Docker. Validasi import DAG dilakukan dalam container dengan
+`docker compose exec airflow airflow dags list-import-errors`.
+
+Untuk analisis lengkap dan autocomplete DAG, gunakan VS Code yang terhubung ke
+container Airflow melalui Dev Containers.
+
+## Fungsi masing-masing file
+
+| File | Fungsi |
+|---|---|
+| `README.md` | Panduan instalasi, menjalankan pipeline, Airflow, pengujian, dan refresh Tableau. |
+| `.env` | Konfigurasi dan password lokal; tidak masuk Git. |
+| `.env.example` | Contoh variabel konfigurasi tanpa password asli. |
+| `.gitignore` | Mengecualikan rahasia, dataset, cache, dan file sementara dari Git. |
+| `.dockerignore` | Membatasi file yang dikirim saat build image Airflow. |
+| `requirements.txt` | Dependensi script Python yang dijalankan lokal. |
+| `docker-compose.yml` | Menjalankan warehouse PostgreSQL, database metadata, dan Airflow. |
+| `docker/airflow.Dockerfile` | Membangun image Airflow beserta dependensi pipeline. |
+| `docker/requirements-airflow.txt` | Dependensi pipeline di container, mengikuti constraints Airflow. |
+| `config/database.py` | Membaca konfigurasi dan membuka koneksi PostgreSQL. |
+| `dags/news_pipeline.py` | Mendefinisikan empat DAG, jadwal, retry, dan pemicu antartahap. |
+| `src/crawling/crawler.py` | Mengumpulkan URL artikel dari pagination situs. |
+| `src/crawling/article_parser.py` | Mengekstrak isi dan metadata dari HTML artikel. |
+| `src/crawling/scrape_details.py` | Mengambil halaman artikel, retry, dan menyimpan checkpoint JSON. |
+| `src/ingestion/initialize_schema.py` | Menjalankan SQL pembuatan schema dan tabel yang belum ada. |
+| `src/ingestion/ingest_articles.py` | Memvalidasi JSON Bronze dan upsert artikel ke staging. |
+| `src/transformation/transform_silver.py` | Membersihkan artikel, menghitung kata, dan membuat token NLP. |
+| `src/transformation/transform_gold.py` | Mengisi dimensi, fakta artikel, dan keyword Gold. |
+| `src/analytics/export_analytics.py` | Memeriksa konsistensi warehouse dan mengekspor dua CSV Tableau. |
+| `sql/staging/01_create_schemas.sql` | Membuat schema staging, Silver, dan Gold. |
+| `sql/staging/02_create_articles.sql` | Membuat tabel artikel staging. |
+| `sql/silver/01_create_articles.sql` | Membuat tabel artikel bersih. |
+| `sql/silver/02_create_article_tokens.sql` | Membuat tabel token, frekuensi, dan relasinya ke artikel Silver. |
+| `sql/gold/01_create_star_schema.sql` | Membuat dimensi tanggal, kategori, penulis, dan fakta artikel. |
+| `sql/gold/02_analytics_dataset.sql` | Query gabungan fakta dan dimensi untuk ekspor analytics; dipakai exporter. |
+| `sql/gold/03_create_article_keywords.sql` | Membuat tabel keyword Gold dan relasinya ke fakta artikel. |
+| `tests/test_pipeline.py` | Menguji validasi, NLP, timezone, refresh token, dan transaksi. |
+| `tests/test_automation.py` | Menguji cursor crawling, kegagalan scraping, dan validasi/ekspor analytics. |
+| `data/bronze/bronze_article_urls.json` | Daftar URL input untuk scraper detail. |
+| `data/bronze/bronze_articles.json` | Detail artikel serta checkpoint untuk ingestion. |
+| `data/bronze/scraping_errors.json` | Catatan artikel gagal agar bisa ditelusuri dan dicoba lagi. |
+| `data/processed/nusantaratv_analytics.csv` | Sumber grafik artikel, KPI, kategori, penulis, dan heatmap. |
+| `data/processed/nusantaratv_keywords.csv` | Sumber visualisasi keyword. |
+| `tableau/Tableau Big Data.twb` | Definisi worksheet, kalkulasi, koneksi CSV, dan dashboard Tableau. |
+
+Database tersimpan dalam Docker volume, bukan folder `data`. File `.twb`
+menyimpan definisi dashboard dan merujuk CSV; jangan menghapus CSV sumbernya.
+
+## Setup database manual melalui SQL
+
+Di pgAdmin atau aplikasi SQL lain, buka Query Tool pada database `postgres`.
+Jalankan `sql/00_create_database.sql` untuk membuat `nusantaratv_dw`.
+Lewati CREATE DATABASE bila database sudah ada. Sesuaikan nama database
+jika `DB_NAME` di `.env` berbeda.
+
+Pindahkan koneksi Query Tool ke `nusantaratv_dw`, lalu jalankan:
+
+1. `sql/staging/01_create_schemas.sql`
+2. `sql/staging/02_create_articles.sql`
+3. `sql/silver/01_create_articles.sql`
+4. `sql/silver/02_create_article_tokens.sql`
+5. `sql/gold/01_create_star_schema.sql`
+6. `sql/gold/03_create_article_keywords.sql`
+
+Semua file memakai SQL biasa. `sql/gold/02_analytics_dataset.sql` adalah
+query SELECT untuk analisis dan ekspor, bukan pembuatan tabel.
+Setup manual ini tidak mengubah inisialisasi tabel yang sudah dipakai DAG.

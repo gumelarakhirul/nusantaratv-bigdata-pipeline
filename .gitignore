@@ -27,7 +27,6 @@ ENV/
 # Dataset hasil crawling dan ETL
 data/bronze/
 data/processed/
-data/diagnostics/
 *.tmp
 
 # Logs
