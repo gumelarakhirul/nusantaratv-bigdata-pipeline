@@ -1,5 +1,9 @@
 
 import re
+import hashlib
+import json
+from contextlib import suppress
+from importlib.metadata import version
 import sys
 from pathlib import Path
 from datetime import datetime
@@ -200,70 +204,68 @@ def preprocess(text):
 # 3. TRANSFORM SILVER PIPELINE
 # =========================================
 
-def main():
-    print("\n" + "=" * 60)
-    print("TRANSFORM SILVER: CLEANING + NLP")
-    print("=" * 60)
+STAGING_QUERY = """
+    SELECT article_id, title, content, description, category, author,
+           published_at, article_url, crawled_at
+    FROM staging.articles ORDER BY article_id
+"""
+SILVER_QUERY = "SELECT article_id, content FROM silver.articles ORDER BY article_id"
+CACHE_DIR = BASE_DIR / "data" / "processed" / "nlp_cache"
+# Source/dependency changes invalidate cached NLP automatically.
+NLP_SIGNATURE = hashlib.sha256(
+    Path(__file__).read_bytes() + version("Sastrawi").encode()
+).hexdigest()
 
+
+def get_frequencies(content):
+    key = hashlib.sha256((NLP_SIGNATURE + content).encode("utf-8")).hexdigest()
+    path = CACHE_DIR / (key + ".json")
+    try:
+        cached = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(cached, dict) and all(
+            isinstance(token, str) and 0 < len(token) <= 100
+            and type(count) is int and count > 0
+            for token, count in cached.items()
+        ):
+            return Counter(cached), True
+    except (OSError, ValueError):
+        pass
+    frequencies = Counter(preprocess(content))
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    temp = path.with_suffix(".json.tmp")
+    temp.write_text(json.dumps(frequencies, ensure_ascii=False), encoding="utf-8")
+    temp.replace(path)
+    return frequencies, False
+
+
+def read_snapshot():
     conn = get_connection()
+    try:
+        conn.set_session(readonly=True, isolation_level="REPEATABLE READ")
+        with conn.cursor() as cursor:
+            cursor.execute(STAGING_QUERY)
+            articles = cursor.fetchall()
+            cursor.execute(SILVER_QUERY)
+            existing = cursor.fetchall()
+        return articles, existing
+    finally:
+        conn.close()
 
+
+def save_results(articles, existing, valid_rows, token_rows):
+    # Open a NEW connection only after all CPU-heavy NLP has finished.
+    conn = get_connection()
     try:
         with conn.cursor() as cursor:
-
-            # ---------------------------------
-            # A. AMBIL DATA STAGING
-            # ---------------------------------
-
-            cursor.execute("""
-                SELECT
-                    article_id,
-                    title,
-                    content,
-                    description,
-                    category,
-                    author,
-                    published_at,
-                    article_url,
-                    crawled_at
-                FROM staging.articles
-                ORDER BY article_id
-            """)
-
-            articles = cursor.fetchall()
-
-            if not articles:
-                raise ValueError(
-                    "staging.articles kosong"
-                )
-
-            print(f"Total staging: {len(articles)}")
-
-            # ---------------------------------
-            # B. DATA CLEANING
-            # ---------------------------------
-
-            valid_rows = []
-            rejected = 0
-
-            for article in articles:
-                try:
-                    valid_rows.append(
-                        transform_article(article)
-                    )
-                except (ValueError, TypeError) as error:
-                    rejected += 1
-                    print(
-                        f"[DITOLAK] {article[0]}: {error}"
-                    )
-
-            if not valid_rows:
-                raise ValueError(
-                    "Tidak ada artikel valid"
-                )
-
-            execute_batch(
-                cursor,
-                """
+            cursor.execute("SET LOCAL lock_timeout = '30s'")
+            cursor.execute("LOCK TABLE staging.articles IN SHARE MODE")
+            cursor.execute("LOCK TABLE silver.articles, silver.article_tokens IN SHARE ROW EXCLUSIVE MODE")
+            cursor.execute(STAGING_QUERY)
+            current_articles = cursor.fetchall()
+            cursor.execute(SILVER_QUERY)
+            if current_articles != articles or cursor.fetchall() != existing:
+                raise RuntimeError("Data sumber berubah selama NLP; ulangi task. Cache NLP tetap tersedia.")
+            execute_batch(cursor, """
                 INSERT INTO silver.articles (
                     article_id,
                     title,
@@ -292,98 +294,63 @@ def main():
                     crawled_at = EXCLUDED.crawled_at,
                     word_count = EXCLUDED.word_count,
                     transformed_at = CURRENT_TIMESTAMP
-                """,
-                valid_rows,
-                page_size=100
-            )
 
-            print(
-                f"Cleaning berhasil: {len(valid_rows)} artikel"
-            )
-            print(f"Data ditolak: {rejected}")
-
-            # ---------------------------------
-            # C. NLP PREPROCESSING
-            # ---------------------------------
-
-            print("\nMemulai NLP Preprocessing...")
-
-            # Rebuild from all persisted Silver articles, including older rows.
-            cursor.execute("SELECT article_id, content FROM silver.articles ORDER BY article_id")
-            nlp_articles = cursor.fetchall()
-
-            token_rows = []
-            total_tokens = 0
-            empty_articles = 0
-
-            for index, article in enumerate(
-                nlp_articles, start=1
-            ):
-                article_id = article[0]
-                content = article[1]
-
-                tokens = preprocess(content)
-                frequencies = Counter(tokens)
-
-                total_tokens += len(tokens)
-
-                if not tokens:
-                    empty_articles += 1
-
-                for token, frequency in frequencies.items():
-                    token_rows.append((
-                        article_id,
-                        token,
-                        frequency
-                    ))
-
-                print(
-                    f"[{index}/{len(nlp_articles)}] "
-                    f"Tokens: {len(tokens)} | "
-                    f"Unique: {len(frequencies)}",
-                    flush=True
-                )
-
-            # Refresh hasil NLP.
-            cursor.execute("""
-                DELETE FROM silver.article_tokens
-            """)
-
+            """, valid_rows, page_size=100)
+            cursor.execute("DELETE FROM silver.article_tokens")
             if token_rows:
-                execute_batch(
-                    cursor,
-                    """
-                    INSERT INTO silver.article_tokens (
-                        article_id,
-                        token,
-                        frequency
-                    )
+                execute_batch(cursor, """
+                    INSERT INTO silver.article_tokens (article_id, token, frequency)
                     VALUES (%s, %s, %s)
-                    """,
-                    token_rows,
-                    page_size=500
-                )
-
-        # Cleaning dan NLP berhasil bersama-sama
-        # atau keduanya di-rollback jika terjadi error.
+                """, token_rows, page_size=500)
         conn.commit()
-
-        print("\n" + "=" * 60)
-        print("TRANSFORM SILVER BERHASIL")
-        print("=" * 60)
-        print(f"Artikel valid       : {len(valid_rows)}")
-        print(f"Artikel ditolak     : {rejected}")
-        print(f"Total token NLP     : {total_tokens}")
-        print(f"Baris article_tokens: {len(token_rows)}")
-        print(f"Artikel tanpa token : {empty_articles}")
-        print("=" * 60)
-
     except Exception:
-        conn.rollback()
+        # Do not replace the original connection error with a rollback error.
+        with suppress(Exception):
+            conn.rollback()
         raise
-
     finally:
         conn.close()
+
+
+def main():
+    print("TRANSFORM SILVER: CLEANING + NLP", flush=True)
+    articles, existing = read_snapshot()
+    if not articles:
+        raise ValueError("staging.articles kosong")
+    print(f"Total staging: {len(articles)}", flush=True)
+    valid_rows = []
+    rejected = 0
+    for article in articles:
+        try:
+            valid_rows.append(transform_article(article))
+        except (ValueError, TypeError) as error:
+            rejected += 1
+            print(f"[DITOLAK] {article[0]}: {error}", flush=True)
+    if not valid_rows:
+        raise ValueError("Tidak ada artikel valid")
+
+    # Preserve retained Silver articles, but use newly cleaned content for upserts.
+    nlp_articles = dict(existing)
+    nlp_articles.update({row[0]: row[2] for row in valid_rows})
+    print("Koneksi baca ditutup. NLP berjalan offline dengan cache.", flush=True)
+    token_rows = []
+    total_tokens = empty_articles = cache_hits = 0
+    for index, (article_id, content) in enumerate(sorted(nlp_articles.items()), 1):
+        frequencies, cached = get_frequencies(content)
+        cache_hits += int(cached)
+        count = sum(frequencies.values())
+        total_tokens += count
+        empty_articles += int(not frequencies)
+        token_rows.extend((article_id, token, frequency)
+                          for token, frequency in frequencies.items())
+        print(f"[{index}/{len(nlp_articles)}] Tokens: {count} | "
+              f"Unique: {len(frequencies)} | Cache: {cached}", flush=True)
+    print("NLP selesai. Membuka koneksi baru untuk menyimpan hasil...", flush=True)
+    save_results(articles, existing, valid_rows, token_rows)
+    print("TRANSFORM SILVER BERHASIL", flush=True)
+    print(f"Artikel valid: {len(valid_rows)} | Ditolak: {rejected}")
+    print(f"Token: {total_tokens} | Baris token: {len(token_rows)}")
+    print(f"Artikel tanpa token: {empty_articles} | Cache hit: {cache_hits}")
 
 
 if __name__ == "__main__":

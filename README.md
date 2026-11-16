@@ -65,6 +65,14 @@ Jadwal otomatis adalah **setiap hari pukul 07.00 WIB**. Komputer, Docker Desktop
 container, dan koneksi internet perlu aktif. Jangan trigger DAG 02-04 sendiri
 saat rantai berjalan karena proses dapat saling tumpang tindih.
 
+Transformasi Silver membaca snapshot lalu menutup koneksi sebelum menjalankan
+NLP. Hasil NLP disimpan di `data/processed/nlp_cache/` berdasarkan konten dan
+versi kode/dependensi, sehingga konten yang tidak berubah tidak perlu diproses
+ulang. Setelah NLP selesai, koneksi baru menyimpan artikel dan token dalam satu
+transaksi. Jika sumber berubah selama NLP, task gagal untuk diulang dengan
+snapshot baru. Cache boleh dihapus saat task tidak aktif; hasilnya akan dihitung
+ulang. Jangan mengubah isi cache secara manual.
+
 Crawler mengambil maksimal 200 URL per run. Artikel detail yang sudah tersimpan
 dilewati; total data dapat bertambah pada run berikutnya. Pengambilan ini tidak
 menjamin seluruh publikasi situs tercakup. Tabel yang sudah ada tidak dihapus
