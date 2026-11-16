@@ -1,4 +1,4 @@
-"""Four chained DAGs. Unpause all; schedule/trigger only ntv_01_crawling."""
+"""Empat DAG berantai. Aktifkan semuanya; jalankan hanya ntv_01_crawling."""
 from datetime import timedelta
 
 import pendulum
@@ -6,10 +6,10 @@ from airflow.sdk import DAG
 from airflow.providers.standard.operators.bash import BashOperator
 from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
 
-DEFAULT_ARGS = {"owner": "nusantaratv", "retries": 2,
-                "retry_delay": timedelta(minutes=5)}
+DEFAULT_ARGS = {'owner': 'nusantaratv', 'retries': 2, 'retry_delay': timedelta(minutes=5)}
 
 
+# Membuat DAG berurutan beserta pemicu DAG berikutnya.
 def make_dag(dag_id, modules, downstream=None, schedule=None):
     with DAG(
         dag_id=dag_id, schedule=schedule,
@@ -39,8 +39,7 @@ def make_dag(dag_id, modules, downstream=None, schedule=None):
     return dag
 
 
-# Waiting for the whole downstream chain keeps the next scheduled crawl from
-# overwriting the shared Bronze files while another pipeline is still running.
+# Tunggu seluruh rangkaian selesai sebelum crawling berikutnya menimpa Bronze.
 crawling = make_dag("ntv_01_crawling", [
     ("collect_urls", "src.crawling.crawler"),
     ("scrape_details", "src.crawling.scrape_details"),

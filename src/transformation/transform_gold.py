@@ -1,4 +1,3 @@
-
 import sys
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -12,48 +11,41 @@ sys.path.insert(0, str(BASE_DIR))
 from config.database import get_connection
 
 
-JAKARTA_TZ = ZoneInfo("Asia/Jakarta")
+JAKARTA_TZ = ZoneInfo('Asia/Jakarta')
 
 
-# =========================================
-# DATE HELPER
-# =========================================
+# PENGOLAHAN TANGGAL
 
+# Mengubah waktu publikasi menjadi waktu Jakarta.
 def to_jakarta(value):
     if isinstance(value, str):
-        value = datetime.fromisoformat(
-            value.replace("Z", "+00:00")
-        )
+        value = datetime.fromisoformat(value.replace('Z', '+00:00'))
 
     if value.tzinfo is None:
-        raise ValueError(
-            "published_at harus memiliki timezone"
-        )
+        raise ValueError('published_at harus memiliki timezone')
 
     return value.astimezone(JAKARTA_TZ)
 
 
+# Membentuk ID tanggal numerik YYYYMMDD.
 def get_date_id(value):
-    return int(value.strftime("%Y%m%d"))
+    return int(value.strftime('%Y%m%d'))
 
 
-# =========================================
-# TRANSFORM GOLD
-# =========================================
+# TRANSFORMASI GOLD
 
+# Mengisi dimensi, fakta, dan keyword Gold dalam satu transaksi.
 def main():
-    print("\n" + "=" * 60)
-    print("TRANSFORMATION SILVER -> GOLD")
-    print("=" * 60)
+    print('\n' + '=' * 60)
+    print('TRANSFORMATION SILVER -> GOLD')
+    print('=' * 60)
 
     conn = get_connection()
 
     try:
         with conn.cursor() as cursor:
 
-            # ---------------------------------
             # 1. AMBIL ARTIKEL SILVER
-            # ---------------------------------
 
             cursor.execute("""
                 SELECT
@@ -69,15 +61,11 @@ def main():
             articles = cursor.fetchall()
 
             if not articles:
-                raise ValueError(
-                    "silver.articles masih kosong"
-                )
+                raise ValueError('silver.articles masih kosong')
 
-            print(f"Total Silver: {len(articles)}")
+            print(f'Total Silver: {len(articles)}')
 
-            # ---------------------------------
             # 2. DIM DATE
-            # ---------------------------------
 
             dates = {}
 
@@ -122,15 +110,9 @@ def main():
                 page_size=100
             )
 
-            # ---------------------------------
             # 3. DIM CATEGORY
-            # ---------------------------------
 
-            categories = sorted({
-                article[1]
-                for article in articles
-                if article[1]
-            })
+            categories = sorted({article[1] for article in articles if article[1]})
 
             execute_batch(
                 cursor,
@@ -151,20 +133,11 @@ def main():
                 FROM gold.dim_category
             """)
 
-            category_map = {
-                name: category_id
-                for category_id, name in cursor.fetchall()
-            }
+            category_map = {name: category_id for category_id, name in cursor.fetchall()}
 
-            # ---------------------------------
             # 4. DIM AUTHOR
-            # ---------------------------------
 
-            authors = sorted({
-                article[2]
-                for article in articles
-                if article[2]
-            })
+            authors = sorted({article[2] for article in articles if article[2]})
 
             if authors:
                 execute_batch(
@@ -186,14 +159,9 @@ def main():
                 FROM gold.dim_author
             """)
 
-            author_map = {
-                name: author_id
-                for author_id, name in cursor.fetchall()
-            }
+            author_map = {name: author_id for author_id, name in cursor.fetchall()}
 
-            # ---------------------------------
             # 5. FACT ARTICLES
-            # ---------------------------------
 
             fact_rows = []
 
@@ -243,9 +211,7 @@ def main():
                 page_size=100
             )
 
-            # ---------------------------------
             # 6. KEYWORD SILVER -> GOLD
-            # ---------------------------------
 
             # Hapus keyword lama agar hasil Gold
             # sesuai dengan preprocessing terbaru.
@@ -268,9 +234,7 @@ def main():
                     ON s.article_id = f.article_id
             """)
 
-            # ---------------------------------
             # 7. VERIFIKASI
-            # ---------------------------------
 
             tables = {
                 "Dim Date": "gold.dim_date",
@@ -283,20 +247,18 @@ def main():
             results = {}
 
             for label, table in tables.items():
-                cursor.execute(
-                    f"SELECT COUNT(*) FROM {table}"
-                )
+                cursor.execute(f'SELECT COUNT(*) FROM {table}')
                 results[label] = cursor.fetchone()[0]
 
         conn.commit()
 
-        print("-" * 60)
-        print("TRANSFORMATION GOLD BERHASIL")
+        print('-' * 60)
+        print('TRANSFORMATION GOLD BERHASIL')
 
         for label, count in results.items():
-            print(f"{label:18}: {count}")
+            print(f'{label:18}: {count}')
 
-        print("=" * 60)
+        print('=' * 60)
 
     except Exception:
         conn.rollback()

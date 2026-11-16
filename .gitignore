@@ -1,9 +1,9 @@
 
 # ==========================================
-# NUSANTARA TV - BIG DATA PIPELINE
+# ALUR PENGOLAHAN DATA NUSANTARA TV
 # ==========================================
 
-# Python cache
+# Cache Python
 __pycache__/
 *.py[cod]
 *.pyo
@@ -11,13 +11,13 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
-# Virtual environment
+# Lingkungan virtual
 venv/
 .venv/
 env/
 ENV/
 
-# Environment variables & secrets
+# Variabel lingkungan dan rahasia
 .env
 .env.*
 !.env.example
@@ -29,7 +29,7 @@ data/bronze/
 data/processed/
 *.tmp
 
-# Logs
+# Catatan proses
 logs/
 *.log
 
@@ -40,26 +40,26 @@ logs/
 .vscode/
 .idea/
 
-# Operating system
+# Sistem operasi
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# PostgreSQL backup
+# Cadangan PostgreSQL
 *.sql.gz
 *.dump
 *.backup
 
-# Airflow local files
+# File lokal Airflow
 airflow.db
 airflow.cfg
 airflow-webserver.pid
 standalone_admin_password.txt
 
-# Tableau temporary files
+# File sementara Tableau
 *.twb~
 *.tmp
 .neon
 
-# Node tooling used by Neon CLI
+# Perangkat Node jika Neon CLI digunakan kembali
 node_modules/

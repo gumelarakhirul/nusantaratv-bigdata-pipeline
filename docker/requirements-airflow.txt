@@ -1,4 +1,4 @@
-# Airflow constraints select compatible versions independently of local Python.
+# Batasan versi Airflow menentukan dependensi yang sesuai untuk container.
 apache-airflow-providers-standard
 beautifulsoup4
 requests

@@ -1,9 +1,9 @@
-"""Validate warehouse consistency and atomically publish Tableau CSVs."""
+"""Memvalidasi warehouse dan menerbitkan CSV Tableau melalui penggantian file atomik."""
 from pathlib import Path
 from config.database import get_connection
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-OUTPUT_DIR = BASE_DIR / "data" / "processed"
+OUTPUT_DIR = BASE_DIR / 'data' / 'processed'
 CHECKS = {
     "staging_without_silver": "SELECT COUNT(*) FROM staging.articles s LEFT JOIN silver.articles v USING(article_id) WHERE v.article_id IS NULL",
     "silver_gold_article_mismatch": "SELECT COUNT(*) FROM silver.articles s FULL JOIN gold.fact_articles f USING(article_id) WHERE s.article_id IS NULL OR f.article_id IS NULL",
@@ -12,22 +12,24 @@ CHECKS = {
 }
 
 
+# Memastikan data Gold terisi dan konsisten dengan sumbernya.
 def validate(cursor):
-    cursor.execute("SELECT COUNT(*) FROM gold.fact_articles")
+    cursor.execute('SELECT COUNT(*) FROM gold.fact_articles')
     if cursor.fetchone()[0] == 0:
-        raise ValueError("Gold kosong; ekspor dibatalkan")
+        raise ValueError('Gold kosong; ekspor dibatalkan')
     for name, query in CHECKS.items():
         cursor.execute(query)
         count = cursor.fetchone()[0]
         if count:
-            raise ValueError(f"Quality check {name}: {count} baris tidak sesuai")
+            raise ValueError(f'Quality check {name}: {count} baris tidak sesuai')
 
 
+# Memvalidasi warehouse lalu menerbitkan dua CSV Tableau.
 def main():
     conn = get_connection()
     pending = []
     try:
-        conn.set_session(readonly=True, isolation_level="REPEATABLE READ")
+        conn.set_session(readonly=True, isolation_level='REPEATABLE READ')
         with conn.cursor() as cursor:
             validate(cursor)
             OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -37,14 +39,14 @@ def main():
             }
             for filename, query in queries.items():
                 target = OUTPUT_DIR / filename
-                temp = target.with_suffix(".csv.tmp")
+                temp = target.with_suffix('.csv.tmp')
                 pending.append((temp, target))
                 with temp.open("w", encoding="utf-8", newline="") as output:
-                    cursor.copy_expert(f"COPY ({query}) TO STDOUT WITH CSV HEADER", output)
+                    cursor.copy_expert(f'COPY ({query}) TO STDOUT WITH CSV HEADER', output)
         conn.commit()
         for temp, target in pending:
             temp.replace(target)
-            print(f"Exported: {target}")
+            print(f'Exported: {target}')
     except Exception:
         conn.rollback()
         raise

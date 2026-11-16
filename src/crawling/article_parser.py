@@ -1,4 +1,3 @@
-
 import re
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlparse
@@ -32,21 +31,20 @@ CATEGORIES = {
 }
 
 
+# Mengambil nilai metadata HTML jika tersedia.
 def get_meta(soup, selector):
     tag = soup.select_one(selector)
 
     if not tag:
         return None
 
-    value = tag.get("content")
+    value = tag.get('content')
     return value.strip() if value else None
 
 
+# Mengubah tanggal berbahasa Indonesia ke ISO dengan zona WIB.
 def parse_date(text):
-    pattern = (
-        r"(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})"
-        r"\s+(\d{1,2}):(\d{2})"
-    )
+    pattern = r"(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})\s+(\d{1,2}):(\d{2})"
 
     match = re.search(pattern, text)
 
@@ -61,14 +59,7 @@ def parse_date(text):
         return None
 
     try:
-        date = datetime(
-            int(year),
-            month_number,
-            int(day),
-            int(hour),
-            int(minute),
-            tzinfo=WIB
-        )
+        date = datetime(int(year), month_number, int(day), int(hour), int(minute), tzinfo=WIB)
 
         return date.isoformat()
 
@@ -76,44 +67,36 @@ def parse_date(text):
         return None
 
 
-
+# Mencari penulis dari link profil atau label pada artikel.
 def extract_author(soup):
-    # Cari link penulis di bagian konten utama
     content_section = soup.select_one("section#content")
+    if not content_section:
+        return None
 
-    if content_section:
-        for link in content_section.select("a[href]"):
-            href = link.get("href", "")
+    for link in content_section.select("a[href]"):
+        if "/penulis/" in link.get("href", ""):
+            name = link.get_text(" ", strip=True)
+            if name:
+                return name
 
-            if "/penulis/" in href:
-                name = link.get_text(" ", strip=True)
-
-                if name:
-                    return name
-
-    # Fallback: cari teks "Penulis:" pada paragraf
-    if content_section:
-        for p in content_section.find_all("p"):
-            text = p.get_text(" ", strip=True)
-
-            if text.lower().startswith("penulis:"):
-                name = text.split(":", 1)[1].strip()
-
-                if name:
-                    return name
-
+    # Gunakan label penulis jika link profil tidak tersedia.
+    for paragraph in content_section.find_all("p"):
+        text = paragraph.get_text(" ", strip=True)
+        if text.lower().startswith("penulis:"):
+            name = text.split(":", 1)[1].strip()
+            if name:
+                return name
     return None
 
 
-
-
+# Mengambil paragraf utama tanpa elemen rekomendasi.
 def extract_content(soup):
     content_tag = soup.select_one(
         "section#content .post-body"
     )
 
     if not content_tag:
-        return ""
+        return ''
 
     # Hindari memasukkan artikel rekomendasi
     for unwanted in content_tag.select(
@@ -124,36 +107,28 @@ def extract_content(soup):
     paragraphs = []
 
     for p in content_tag.find_all("p"):
-        text = p.get_text(" ", strip=True)
+        text = p.get_text(' ', strip=True)
 
         if text:
             paragraphs.append(text)
 
-    return "\n".join(paragraphs)
+    return '\n'.join(paragraphs)
 
 
+# Menyusun isi dan metadata halaman menjadi satu artikel.
 def parse_article(soup, url):
     # 1. Judul
-    title_tag = soup.select_one("h1.post-title")
+    title_tag = soup.select_one('h1.post-title')
 
-    title = (
-        title_tag.get_text(" ", strip=True)
-        if title_tag else None
-    )
+    title = title_tag.get_text(' ', strip=True) if title_tag else None
 
     if not title:
-        title = get_meta(
-            soup,
-            'meta[property="og:title"]'
-        )
+        title = get_meta(soup, 'meta[property="og:title"]')
 
     # 2. Tanggal dan jam publikasi
-    date_tag = soup.select_one("h2.post-title")
+    date_tag = soup.select_one('h2.post-title')
 
-    date_text = (
-        date_tag.get_text(" ", strip=True)
-        if date_tag else ""
-    )
+    date_text = date_tag.get_text(' ', strip=True) if date_tag else ''
 
     published_at = parse_date(date_text)
 
@@ -164,19 +139,13 @@ def parse_article(soup, url):
     author = extract_author(soup)
 
     # 5. Ringkasan
-    description = get_meta(
-        soup,
-        'meta[name="description"]'
-    )
+    description = get_meta(soup, 'meta[name="description"]')
 
     # 6. Kategori dari URL
-    parts = urlparse(url).path.strip("/").split("/")
-    category_slug = parts[0] if parts else ""
+    parts = urlparse(url).path.strip('/').split('/')
+    category_slug = parts[0] if parts else ''
 
-    category = CATEGORIES.get(
-        category_slug,
-        category_slug
-    )
+    category = CATEGORIES.get(category_slug, category_slug)
 
     # 7. Jumlah kata
     word_count = len(content.split())

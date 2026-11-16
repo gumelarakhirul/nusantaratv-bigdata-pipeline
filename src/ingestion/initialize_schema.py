@@ -1,4 +1,4 @@
-"""Create missing warehouse tables without deleting existing data."""
+"""Membuat tabel warehouse yang belum ada tanpa menghapus data."""
 from pathlib import Path
 from config.database import get_connection
 
@@ -10,12 +10,13 @@ DDL_FILES = [
 ]
 
 
+# Membuat skema dan tabel sesuai urutan dependensinya.
 def main():
     conn = get_connection()
     try:
         with conn.cursor() as cursor:
             for name in DDL_FILES:
-                cursor.execute((BASE_DIR / "sql" / name).read_text(encoding="utf-8"))
+                cursor.execute((BASE_DIR / 'sql' / name).read_text(encoding='utf-8'))
         conn.commit()
     except Exception:
         conn.rollback()

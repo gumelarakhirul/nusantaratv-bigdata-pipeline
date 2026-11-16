@@ -1,6 +1,7 @@
-
 import re
+import ast
 import hashlib
+import inspect
 import json
 from contextlib import suppress
 from importlib.metadata import version
@@ -20,19 +21,16 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BASE_DIR))
 
 from config.database import get_connection
+from src.transformation.nlp_cache import NLPCache
 
 
-# =========================================
 # KONFIGURASI NLP
-# =========================================
 
 stemmer = StemmerFactory().create_stemmer()
 
-stopwords = set(
-    StopWordRemoverFactory().get_stop_words()
-)
+stopwords = set(StopWordRemoverFactory().get_stop_words())
 
-# Stopword tambahan khusus analisis berita
+# Kata umum tambahan khusus analisis berita
 custom_stopwords = {
     "ujar", "kata", "ungkap", "tutur",
     "jelas", "sebut", "imbuh",
@@ -46,29 +44,46 @@ stopwords.update(custom_stopwords)
 
 MIN_WORD_LENGTH = 3
 
-# =========================================
-# 1. DATA CLEANING
-# =========================================
+# Kamus terbatas untuk bentuk informal yang maknanya cukup jelas.
+# Kata di luar kamus dipertahankan, termasuk nama orang dan singkatan berita.
+NORMALIZATION_MAP = {
+    "gw": "saya", "gue": "saya", "gua": "saya",
+    "lu": "kamu", "lo": "kamu",
+    "udh": "sudah", "udah": "sudah", "sdh": "sudah",
+    "blm": "belum", "tdk": "tidak", "gak": "tidak",
+    "ga": "tidak", "gk": "tidak", "nggak": "tidak",
+    "ngga": "tidak", "enggak": "tidak",
+    "yg": "yang", "dgn": "dengan", "dg": "dengan",
+    "utk": "untuk", "krn": "karena", "karna": "karena",
+    "dlm": "dalam", "jg": "juga", "jgn": "jangan",
+    "tp": "tetapi", "tapi": "tetapi", "kalo": "kalau",
+    "skrg": "sekarang", "bgt": "sangat", "aja": "saja",
+    "gimana": "bagaimana", "gmn": "bagaimana",
+    "gpp": "tidak apa apa",
+}
 
+# 1. VALIDASI DAN PERAPIAN KOLOM (BAGIAN PRAPEMROSESAN)
+
+# Merapikan spasi pada kolom artikel.
 def clean_field(value):
     if value is None:
-        return ""
+        return ''
 
-    return re.sub(
-        r"\s+", " ", str(value)
-    ).strip()
+    return re.sub('\\s+', ' ', str(value)).strip()
 
 
+# Membaca tanggal dan memastikan zona waktu tersedia.
 def parse_datetime(value):
     if not isinstance(value, datetime):
         if not value:
-            raise ValueError("Tanggal kosong")
-        value = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            raise ValueError('Tanggal kosong')
+        value = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
     if value.utcoffset() is None:
-        raise ValueError("Tanggal harus memiliki timezone")
+        raise ValueError('Tanggal harus memiliki timezone')
     return value
 
 
+# Memvalidasi dan merapikan kolom artikel untuk Silver.
 def transform_article(article):
     (
         article_id,
@@ -98,16 +113,11 @@ def transform_article(article):
         article_url,
         published_at
     ]):
-        raise ValueError(
-            "Kolom wajib tidak lengkap"
-        )
+        raise ValueError('Kolom wajib tidak lengkap')
 
     published_at = parse_datetime(published_at)
 
-    crawled_at = (
-        parse_datetime(crawled_at)
-        if crawled_at else None
-    )
+    crawled_at = parse_datetime(crawled_at) if crawled_at else None
 
     word_count = len(content.split())
 
@@ -125,14 +135,14 @@ def transform_article(article):
     )
 
 
-# =========================================
-# 2. NLP PREPROCESSING
-# =========================================
+# 2. PRAPEMROSESAN TEKS NLP
 
+# Mengubah teks menjadi huruf kecil.
 def case_folding(text):
     return (text or "").lower()
 
 
+# Membersihkan URL, angka, simbol, dan spasi berlebih.
 def clean_nlp_text(text):
     text = re.sub(
         r"https?://\S+|www\.\S+",
@@ -146,10 +156,22 @@ def clean_nlp_text(text):
     return text.strip()
 
 
+# Memecah teks menjadi token kata.
 def tokenize(text):
     return text.split()
 
 
+# Mengubah bentuk tidak baku dengan kamus normalisasi.
+def normalize_tokens(tokens):
+    # Pisahkan hasil normalisasi yang terdiri dari beberapa kata menjadi token.
+    return [
+        word
+        for token in tokens
+        for word in NORMALIZATION_MAP.get(token, token).split()
+    ]
+
+
+# Membuang kata umum dan token yang terlalu pendek.
 def remove_stopwords(tokens):
     return [
         token
@@ -159,14 +181,16 @@ def remove_stopwords(tokens):
     ]
 
 
+# Mengambil kata dasar dengan pengecualian makna tertentu.
 @lru_cache(maxsize=50000)
 def stem_word(word):
-    # Preserve meaning before stemming conflates these distinct words.
+    # Pertahankan makna kata yang bisa tercampur akibat pembentukan kata dasar.
     if word in {"perintah", "pemerintah", "pemerintahan"}:
         return "pemerintah" if word != "perintah" else "perintah"
     return stemmer.stem(word)
 
 
+# Menerapkan pembentukan kata dasar pada setiap token.
 def stemming(tokens):
     return [
         stem_word(token)
@@ -174,23 +198,24 @@ def stemming(tokens):
     ]
 
 
+# Menjalankan enam tahap preprocessing teks secara berurutan.
 def preprocess(text):
-    # Case folding
+    # 1. Penyeragaman huruf kecil
     text = case_folding(text)
 
-    # Text cleaning
+    # 2. Ekspresi reguler: bersihkan URL, angka, simbol, dan emoji
     text = clean_nlp_text(text)
 
-    # Tokenization
+    # 3. Tokenisasi
     tokens = tokenize(text)
 
-    # Stopword removal sebelum stemming
-    tokens = remove_stopwords(tokens)
+    # 4. Normalisasi kata tidak baku
+    tokens = normalize_tokens(tokens)
 
-    # Stemming
+    # 5. Pembentukan kata dasar
     tokens = stemming(tokens)
 
-    # Stopword removal setelah stemming
+    # 6. Penghapusan kata umum
     tokens = remove_stopwords(tokens)
 
     return [
@@ -200,65 +225,60 @@ def preprocess(text):
     ]
 
 
-# =========================================
-# 3. TRANSFORM SILVER PIPELINE
-# =========================================
+# 3. ALUR TRANSFORMASI SILVER
 
 STAGING_QUERY = """
     SELECT article_id, title, content, description, category, author,
            published_at, article_url, crawled_at
     FROM staging.articles ORDER BY article_id
 """
-SILVER_QUERY = "SELECT article_id, content FROM silver.articles ORDER BY article_id"
-CACHE_DIR = BASE_DIR / "data" / "processed" / "nlp_cache"
-# Source/dependency changes invalidate cached NLP automatically.
-NLP_SIGNATURE = hashlib.sha256(
-    Path(__file__).read_bytes() + version("Sastrawi").encode()
-).hexdigest()
+SILVER_QUERY = 'SELECT article_id, content FROM silver.articles ORDER BY article_id'
+CACHE_PATH = BASE_DIR / 'data' / 'processed' / 'nlp_cache.sqlite3'
+# Perbarui identitas cache hanya jika algoritma, konfigurasi NLP, atau Sastrawi berubah.
+NLP_SIGNATURE = hashlib.sha256((
+    "\n".join(ast.dump(ast.parse(inspect.getsource(function))) for function in (
+        case_folding, clean_nlp_text, tokenize, normalize_tokens, remove_stopwords,
+        stem_word, stemming, preprocess,
+    )) + json.dumps(sorted(stopwords))
+    + json.dumps(NORMALIZATION_MAP, sort_keys=True, ensure_ascii=False)
+    + str(MIN_WORD_LENGTH) + version("Sastrawi")
+).encode("utf-8")).hexdigest()
 
 
-def get_frequencies(content):
-    key = hashlib.sha256((NLP_SIGNATURE + content).encode("utf-8")).hexdigest()
-    path = CACHE_DIR / (key + ".json")
-    try:
-        cached = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(cached, dict) and all(
-            isinstance(token, str) and 0 < len(token) <= 100
-            and type(count) is int and count > 0
-            for token, count in cached.items()
-        ):
-            return Counter(cached), True
-    except (OSError, ValueError):
-        pass
+# Mengambil cache atau menghitung frekuensi token baru.
+def get_frequencies(content, cache):
+    key = hashlib.sha256((NLP_SIGNATURE + content).encode('utf-8')).hexdigest()
+    frequencies = cache.get(key)
+    if frequencies is not None:
+        return (frequencies, True)
     frequencies = Counter(preprocess(content))
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    temp = path.with_suffix(".json.tmp")
-    temp.write_text(json.dumps(frequencies, ensure_ascii=False), encoding="utf-8")
-    temp.replace(path)
-    return frequencies, False
+    cache.put(key, frequencies)
+    return (frequencies, False)
 
 
+# Membaca salinan konsisten staging dan Silver lalu menutup koneksi.
 def read_snapshot():
     conn = get_connection()
     try:
-        conn.set_session(readonly=True, isolation_level="REPEATABLE READ")
+        conn.set_session(readonly=True, isolation_level='REPEATABLE READ')
         with conn.cursor() as cursor:
             cursor.execute(STAGING_QUERY)
             articles = cursor.fetchall()
             cursor.execute(SILVER_QUERY)
             existing = cursor.fetchall()
-        return articles, existing
+        return (articles, existing)
     finally:
         conn.close()
 
 
+# Menyimpan artikel dan token setelah memastikan sumber belum berubah.
 def save_results(articles, existing, valid_rows, token_rows):
-    # Open a NEW connection only after all CPU-heavy NLP has finished.
+    # Buka koneksi baru setelah seluruh pemrosesan NLP selesai.
     conn = get_connection()
     try:
         with conn.cursor() as cursor:
             cursor.execute("SET LOCAL lock_timeout = '30s'")
-            cursor.execute("LOCK TABLE staging.articles IN SHARE MODE")
+            cursor.execute('LOCK TABLE staging.articles IN SHARE MODE')
             cursor.execute("LOCK TABLE silver.articles, silver.article_tokens IN SHARE ROW EXCLUSIVE MODE")
             cursor.execute(STAGING_QUERY)
             current_articles = cursor.fetchall()
@@ -296,7 +316,7 @@ def save_results(articles, existing, valid_rows, token_rows):
                     transformed_at = CURRENT_TIMESTAMP
 
             """, valid_rows, page_size=100)
-            cursor.execute("DELETE FROM silver.article_tokens")
+            cursor.execute('DELETE FROM silver.article_tokens')
             if token_rows:
                 execute_batch(cursor, """
                     INSERT INTO silver.article_tokens (article_id, token, frequency)
@@ -304,7 +324,7 @@ def save_results(articles, existing, valid_rows, token_rows):
                 """, token_rows, page_size=500)
         conn.commit()
     except Exception:
-        # Do not replace the original connection error with a rollback error.
+        # Pertahankan error asli jika pembatalan transaksi juga gagal.
         with suppress(Exception):
             conn.rollback()
         raise
@@ -312,12 +332,13 @@ def save_results(articles, existing, valid_rows, token_rows):
         conn.close()
 
 
+# Menjalankan preprocessing tanpa koneksi database dan menyimpan hasil Silver.
 def main():
-    print("TRANSFORM SILVER: CLEANING + NLP", flush=True)
+    print('TRANSFORM SILVER: PREPROCESSING DATA DAN TEKS NLP', flush=True)
     articles, existing = read_snapshot()
     if not articles:
-        raise ValueError("staging.articles kosong")
-    print(f"Total staging: {len(articles)}", flush=True)
+        raise ValueError('staging.articles kosong')
+    print(f'Total staging: {len(articles)}', flush=True)
     valid_rows = []
     rejected = 0
     for article in articles:
@@ -325,32 +346,33 @@ def main():
             valid_rows.append(transform_article(article))
         except (ValueError, TypeError) as error:
             rejected += 1
-            print(f"[DITOLAK] {article[0]}: {error}", flush=True)
+            print(f'[DITOLAK] {article[0]}: {error}', flush=True)
     if not valid_rows:
-        raise ValueError("Tidak ada artikel valid")
+        raise ValueError('Tidak ada artikel valid')
 
-    # Preserve retained Silver articles, but use newly cleaned content for upserts.
+    # Pertahankan artikel Silver lama dan gunakan konten baru untuk pembaruan.
     nlp_articles = dict(existing)
     nlp_articles.update({row[0]: row[2] for row in valid_rows})
-    print("Koneksi baca ditutup. NLP berjalan offline dengan cache.", flush=True)
+    print('Koneksi baca ditutup. NLP berjalan offline dengan cache.', flush=True)
     token_rows = []
     total_tokens = empty_articles = cache_hits = 0
-    for index, (article_id, content) in enumerate(sorted(nlp_articles.items()), 1):
-        frequencies, cached = get_frequencies(content)
-        cache_hits += int(cached)
-        count = sum(frequencies.values())
-        total_tokens += count
-        empty_articles += int(not frequencies)
-        token_rows.extend((article_id, token, frequency)
-                          for token, frequency in frequencies.items())
-        print(f"[{index}/{len(nlp_articles)}] Tokens: {count} | "
-              f"Unique: {len(frequencies)} | Cache: {cached}", flush=True)
-    print("NLP selesai. Membuka koneksi baru untuk menyimpan hasil...", flush=True)
+    with NLPCache(CACHE_PATH) as cache:
+        for index, (article_id, content) in enumerate(sorted(nlp_articles.items()), 1):
+            frequencies, cached = get_frequencies(content, cache)
+            cache_hits += int(cached)
+            count = sum(frequencies.values())
+            total_tokens += count
+            empty_articles += int(not frequencies)
+            token_rows.extend((article_id, token, frequency)
+                              for token, frequency in frequencies.items())
+            print(f"[{index}/{len(nlp_articles)}] Tokens: {count} | "
+                  f"Unique: {len(frequencies)} | Cache: {cached}", flush=True)
+    print('NLP selesai. Membuka koneksi baru untuk menyimpan hasil...', flush=True)
     save_results(articles, existing, valid_rows, token_rows)
-    print("TRANSFORM SILVER BERHASIL", flush=True)
-    print(f"Artikel valid: {len(valid_rows)} | Ditolak: {rejected}")
-    print(f"Token: {total_tokens} | Baris token: {len(token_rows)}")
-    print(f"Artikel tanpa token: {empty_articles} | Cache hit: {cache_hits}")
+    print('TRANSFORM SILVER BERHASIL', flush=True)
+    print(f'Artikel valid: {len(valid_rows)} | Ditolak: {rejected}')
+    print(f'Token: {total_tokens} | Baris token: {len(token_rows)}')
+    print(f'Artikel tanpa token: {empty_articles} | Cache hit: {cache_hits}')
 
 
 if __name__ == "__main__":

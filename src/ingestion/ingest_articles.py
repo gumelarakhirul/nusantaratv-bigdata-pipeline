@@ -1,4 +1,3 @@
-
 import json
 import sys
 from pathlib import Path
@@ -12,69 +11,64 @@ sys.path.insert(0, str(BASE_DIR))
 from config.database import get_connection
 
 
-INPUT_FILE = BASE_DIR / "data" / "bronze" / "bronze_articles.json"
+INPUT_FILE = BASE_DIR / 'data' / 'bronze' / 'bronze_articles.json'
 
-REQUIRED_FIELDS = [
-    "article_id",
-    "title",
-    "content",
-    "article_url",
-    "published_at",
-]
+REQUIRED_FIELDS = ['article_id', 'title', 'content', 'article_url', 'published_at']
 
 
+# Membaca daftar artikel Bronze dan memeriksa format JSON.
 def load_bronze_data():
     if not INPUT_FILE.exists():
-        raise FileNotFoundError(
-            f"File Bronze tidak ditemukan: {INPUT_FILE}"
-        )
+        raise FileNotFoundError(f'File Bronze tidak ditemukan: {INPUT_FILE}')
 
     with open(INPUT_FILE, "r", encoding="utf-8") as file:
         articles = json.load(file)
 
     if not isinstance(articles, list):
-        raise ValueError("Data Bronze harus berupa list artikel.")
+        raise ValueError('Data Bronze harus berupa list artikel.')
 
     return articles
 
 
+# Memeriksa kolom wajib, tipe, batas ukuran, dan zona waktu.
 def validate_article(article):
     if not isinstance(article, dict):
-        return False, "Format artikel bukan object"
+        return (False, 'Format artikel bukan object')
 
-    required = set(REQUIRED_FIELDS) | {"category"}
-    limits = {"article_id": 64, "category": 100, "author": 255}
+    required = set(REQUIRED_FIELDS) | {'category'}
+    limits = {'article_id': 64, 'category': 100, 'author': 255}
     for field in required | {"description", "author", "crawled_at"}:
         value = article.get(field)
         if value is None and field not in required:
             continue
         if not isinstance(value, str) or "\x00" in value:
-            return False, f"Field {field} harus berupa teks tanpa NUL"
+            return (False, f'Field {field} harus berupa teks tanpa NUL')
         if field in required and not value.strip():
-            return False, f"Field {field} kosong"
+            return (False, f'Field {field} kosong')
         if field in limits and len(value) > limits[field]:
-            return False, f"Field {field} terlalu panjang"
+            return (False, f'Field {field} terlalu panjang')
 
     for field in ["published_at", "crawled_at"]:
         value = article.get(field)
         if value is not None:
             try:
-                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
                 if parsed.utcoffset() is None:
-                    return False, f"{field} harus memiliki timezone"
+                    return (False, f'{field} harus memiliki timezone')
             except ValueError:
-                return False, f"Format {field} tidak valid"
+                return (False, f'Format {field} tidak valid')
 
-    value = article.get("word_count")
+    value = article.get('word_count')
     if value is not None and (
         isinstance(value, bool) or not isinstance(value, int)
         or not 0 <= value <= 2147483647
     ):
-        return False, "word_count harus integer nonnegatif dalam batas PostgreSQL"
+        return (False, 'word_count harus integer nonnegatif dalam batas PostgreSQL')
 
-    return True, None
+    return (True, None)
 
 
+# Menyusun nilai artikel sesuai urutan kolom INSERT.
 def prepare_article(article):
     return (
         article["article_id"],
@@ -122,10 +116,11 @@ DO UPDATE SET
 """
 
 
+# Memvalidasi artikel unik lalu melakukan sisip atau perbarui ke staging.
 def main():
-    print("=" * 60)
-    print("INGESTION BRONZE JSON -> POSTGRESQL STAGING")
-    print("=" * 60)
+    print('=' * 60)
+    print('INGESTION BRONZE JSON -> POSTGRESQL STAGING')
+    print('=' * 60)
 
     articles = load_bronze_data()
 
@@ -140,52 +135,43 @@ def main():
             rejected_articles.append((index, error))
             continue
 
-        article_id = article["article_id"]
+        article_id = article['article_id']
 
         if article_id in seen_ids:
-            rejected_articles.append(
-                (index, "Duplikasi article_id dalam Bronze")
-            )
+            rejected_articles.append((index, 'Duplikasi article_id dalam Bronze'))
             continue
 
         seen_ids.add(article_id)
         valid_articles.append(prepare_article(article))
 
-    print(f"Total Bronze  : {len(articles)}")
-    print(f"Data valid    : {len(valid_articles)}")
-    print(f"Data ditolak  : {len(rejected_articles)}")
+    print(f'Total Bronze  : {len(articles)}')
+    print(f'Data valid    : {len(valid_articles)}')
+    print(f'Data ditolak  : {len(rejected_articles)}')
 
     for index, error in rejected_articles[:10]:
         print(f"[DITOLAK] Artikel #{index}: {error}")
 
     if not valid_articles:
-        raise ValueError("Tidak ada artikel valid untuk dimasukkan")
+        raise ValueError('Tidak ada artikel valid untuk dimasukkan')
 
     connection = get_connection()
 
     try:
         with connection.cursor() as cursor:
-            execute_batch(
-                cursor,
-                UPSERT_QUERY,
-                valid_articles,
-                page_size=100,
-            )
+            execute_batch(cursor, UPSERT_QUERY, valid_articles, page_size=100)
 
         connection.commit()
 
         with connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT COUNT(*) FROM staging.articles"
-            )
+            cursor.execute('SELECT COUNT(*) FROM staging.articles')
             total_database = cursor.fetchone()[0]
 
-        print("-" * 60)
-        print("INGESTION BERHASIL")
-        print(f"Data diproses : {len(valid_articles)}")
-        print(f"Total staging : {total_database}")
-        print("Tabel         : staging.articles")
-        print("=" * 60)
+        print('-' * 60)
+        print('INGESTION BERHASIL')
+        print(f'Data diproses : {len(valid_articles)}')
+        print(f'Total staging : {total_database}')
+        print('Tabel         : staging.articles')
+        print('=' * 60)
 
     except Exception:
         connection.rollback()

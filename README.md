@@ -54,7 +54,7 @@ Di menu **Dags**, unpause keempat DAG. Untuk menjalankan sekarang, trigger
 |---|---|---|
 | `ntv_01_crawling` | Mengambil URL dan detail artikel. | JSON di `data/bronze/`. |
 | `ntv_02_ingestion` | Membuat tabel yang belum ada, validasi, dan upsert artikel. | `staging.articles` di Neon. |
-| `ntv_03_transformation` | Cleaning, NLP, dan pembentukan star schema. | Tabel Silver dan Gold di Neon. |
+| `ntv_03_transformation` | Preprocessing data/teks NLP dan pembentukan star schema. | Tabel Silver dan Gold di Neon. |
 | `ntv_04_analytics` | Memeriksa konsistensi data dan mengekspor hasil. | Dua CSV di `data/processed/`. |
 
 Setelah seluruh rantai selesai, run keempat DAG akan berstatus **Success**.
@@ -65,12 +65,26 @@ Jadwal otomatis adalah **setiap hari pukul 07.00 WIB**. Komputer, Docker Desktop
 container, dan koneksi internet perlu aktif. Jangan trigger DAG 02-04 sendiri
 saat rantai berjalan karena proses dapat saling tumpang tindih.
 
+Preprocessing Silver merupakan satu tahap yang mencakup validasi/perapian field
+artikel dan preprocessing teks dengan urutan:
+
+```text
+Case Folding -> RegEx -> Tokenisasi -> Normalisasi -> Stemming -> Stopword Removal
+```
+
+Normalisasi menggunakan kamus `NORMALIZATION_MAP` di `transform_silver.py`,
+misalnya `gw -> saya`, `udh -> sudah`, dan `yg -> yang`. Kata yang tidak ada di
+kamus dipertahankan. Kamus ini terbatas, bukan koreksi otomatis seluruh ejaan.
+Token pendek tetap diperiksa setelah normalisasi dan stemming. Konten artikel
+asli yang sudah dirapikan tetap disimpan untuk dibaca; token hasil preprocessing
+disimpan terpisah di `silver.article_tokens`.
+
 Transformasi Silver membaca snapshot lalu menutup koneksi sebelum menjalankan
-NLP. Hasil NLP disimpan di `data/processed/nlp_cache/` berdasarkan konten dan
-versi kode/dependensi, sehingga konten yang tidak berubah tidak perlu diproses
+NLP. Hasil NLP disimpan di satu file SQLite `data/processed/nlp_cache.sqlite3` berdasarkan konten,
+konfigurasi/algoritma NLP, dan versi Sastrawi, sehingga konten yang tidak berubah tidak perlu diproses
 ulang. Setelah NLP selesai, koneksi baru menyimpan artikel dan token dalam satu
 transaksi. Jika sumber berubah selama NLP, task gagal untuk diulang dengan
-snapshot baru. Cache boleh dihapus saat task tidak aktif; hasilnya akan dihitung
+snapshot baru. File cache boleh dihapus saat task tidak aktif; hasilnya akan dihitung
 ulang. Jangan mengubah isi cache secara manual.
 
 Crawler mengambil maksimal 200 URL per run. Artikel detail yang sudah tersimpan
@@ -156,7 +170,8 @@ tidak otomatis membagikan dashboard Airflow maupun CSV lokal.
 | `src/crawling/scrape_details.py` | Scraping detail, retry, checkpoint, dan catatan error. |
 | `src/ingestion/initialize_schema.py` | Membuat schema dan tabel yang belum ada. |
 | `src/ingestion/ingest_articles.py` | Memvalidasi Bronze dan mengisi staging. |
-| `src/transformation/transform_silver.py` | Cleaning artikel dan pemrosesan token NLP. |
+| `src/transformation/transform_silver.py` | Preprocessing field artikel dan teks NLP dalam satu task Silver. |
+| `src/transformation/nlp_cache.py` | Menyimpan dan membaca cache hasil NLP di SQLite lokal. |
 | `src/transformation/transform_gold.py` | Mengisi dimensi, fakta, dan keyword Gold. |
 | `src/analytics/export_analytics.py` | Validasi warehouse dan ekspor CSV. |
 | `sql/staging/` | DDL schema dan tabel staging. |

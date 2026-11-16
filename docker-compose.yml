@@ -18,8 +18,8 @@ services:
       timeout: 5s
       retries: 5
 
-  # Standalone starts API server, scheduler, DAG processor and triggerer.
-  # Intended for this local educational project.
+  # Mode standalone menjalankan server API, penjadwal, pemroses DAG, dan pemicu.
+  # Digunakan untuk proyek pendidikan yang berjalan lokal.
   airflow:
     build:
       context: .
