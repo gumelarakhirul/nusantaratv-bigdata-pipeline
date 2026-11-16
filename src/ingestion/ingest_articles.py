@@ -112,7 +112,14 @@ DO UPDATE SET
     article_url = EXCLUDED.article_url,
     crawled_at = EXCLUDED.crawled_at,
     word_count = EXCLUDED.word_count,
-    ingested_at = CURRENT_TIMESTAMP;
+    ingested_at = CURRENT_TIMESTAMP
+WHERE (staging.articles.title, staging.articles.content, staging.articles.description,
+       staging.articles.category, staging.articles.author, staging.articles.published_at,
+       staging.articles.article_url, staging.articles.crawled_at, staging.articles.word_count)
+IS DISTINCT FROM
+      (EXCLUDED.title, EXCLUDED.content, EXCLUDED.description, EXCLUDED.category,
+       EXCLUDED.author, EXCLUDED.published_at, EXCLUDED.article_url,
+       EXCLUDED.crawled_at, EXCLUDED.word_count);
 """
 
 

@@ -232,7 +232,13 @@ STAGING_QUERY = """
            published_at, article_url, crawled_at
     FROM staging.articles ORDER BY article_id
 """
-SILVER_QUERY = 'SELECT article_id, content FROM silver.articles ORDER BY article_id'
+SILVER_QUERY = """
+    SELECT s.article_id, s.title, s.content, s.description, s.category, s.author,
+           s.published_at, s.article_url, s.crawled_at, s.word_count,
+           p.content_hash, p.nlp_signature
+    FROM silver.articles s LEFT JOIN silver.article_processing p USING (article_id)
+    ORDER BY s.article_id
+"""
 CACHE_PATH = BASE_DIR / 'data' / 'processed' / 'nlp_cache.sqlite3'
 # Perbarui identitas cache hanya jika algoritma, konfigurasi NLP, atau Sastrawi berubah.
 NLP_SIGNATURE = hashlib.sha256((
@@ -271,15 +277,31 @@ def read_snapshot():
         conn.close()
 
 
+# Memilih hanya artikel berubah serta token yang perlu dihitung ulang.
+def plan_changes(valid_rows, existing, signature=None):
+    signature = NLP_SIGNATURE if signature is None else signature
+    previous = {row[0]: row for row in existing}
+    changed = [row for row in valid_rows if row != previous.get(row[0], ())[:10]]
+    contents = {row[0]: row[2] for row in existing}
+    contents.update({row[0]: row[2] for row in valid_rows})
+    pending = []
+    for article_id, content in sorted(contents.items()):
+        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        state = previous.get(article_id, ())
+        if len(state) < 12 or state[10:] != (content_hash, signature):
+            pending.append((article_id, content, content_hash, signature))
+    return changed, pending
+
+
 # Menyimpan artikel dan token setelah memastikan sumber belum berubah.
-def save_results(articles, existing, valid_rows, token_rows):
+def save_results(articles, existing, valid_rows, token_rows, processing_rows):
     # Buka koneksi baru setelah seluruh pemrosesan NLP selesai.
     conn = get_connection()
     try:
         with conn.cursor() as cursor:
             cursor.execute("SET LOCAL lock_timeout = '30s'")
             cursor.execute('LOCK TABLE staging.articles IN SHARE MODE')
-            cursor.execute("LOCK TABLE silver.articles, silver.article_tokens IN SHARE ROW EXCLUSIVE MODE")
+            cursor.execute("LOCK TABLE silver.articles, silver.article_tokens, silver.article_processing IN SHARE ROW EXCLUSIVE MODE")
             cursor.execute(STAGING_QUERY)
             current_articles = cursor.fetchall()
             cursor.execute(SILVER_QUERY)
@@ -316,12 +338,23 @@ def save_results(articles, existing, valid_rows, token_rows):
                     transformed_at = CURRENT_TIMESTAMP
 
             """, valid_rows, page_size=100)
-            cursor.execute('DELETE FROM silver.article_tokens')
+            article_ids = [row[0] for row in processing_rows]
+            if article_ids:
+                cursor.execute("DELETE FROM silver.article_tokens WHERE article_id = ANY(%s)", (article_ids,))
             if token_rows:
                 execute_batch(cursor, """
                     INSERT INTO silver.article_tokens (article_id, token, frequency)
                     VALUES (%s, %s, %s)
                 """, token_rows, page_size=500)
+            if processing_rows:
+                execute_batch(cursor, """
+                    INSERT INTO silver.article_processing (article_id, content_hash, nlp_signature)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (article_id) DO UPDATE SET
+                        content_hash = EXCLUDED.content_hash,
+                        nlp_signature = EXCLUDED.nlp_signature,
+                        processed_at = CURRENT_TIMESTAMP
+                """, processing_rows)
         conn.commit()
     except Exception:
         # Pertahankan error asli jika pembatalan transaksi juga gagal.
@@ -340,37 +373,38 @@ def main():
         raise ValueError('staging.articles kosong')
     print(f'Total staging: {len(articles)}', flush=True)
     valid_rows = []
-    rejected = 0
-    for article in articles:
+    rejected_rows = []
+    for index, article in enumerate(articles, 1):
         try:
             valid_rows.append(transform_article(article))
         except (ValueError, TypeError) as error:
-            rejected += 1
+            rejected_rows.append((index, article[0], str(error)))
             print(f'[DITOLAK] {article[0]}: {error}', flush=True)
     if not valid_rows:
         raise ValueError('Tidak ada artikel valid')
 
-    # Pertahankan artikel Silver lama dan gunakan konten baru untuk pembaruan.
-    nlp_articles = dict(existing)
-    nlp_articles.update({row[0]: row[2] for row in valid_rows})
-    print('Koneksi baca ditutup. NLP berjalan offline dengan cache.', flush=True)
-    token_rows = []
+    changed_rows, pending = plan_changes(valid_rows, existing)
+    print(f"Artikel berubah: {len(changed_rows)} | Perlu NLP: {len(pending)}", flush=True)
+    if not changed_rows and not pending:
+        print("SILVER SUDAH TERBARU: tidak ada penulisan database", flush=True)
+        return
+    print("Koneksi baca ditutup. NLP berjalan tanpa koneksi Neon.", flush=True)
+    token_rows, processing_rows = [], []
     total_tokens = empty_articles = cache_hits = 0
     with NLPCache(CACHE_PATH) as cache:
-        for index, (article_id, content) in enumerate(sorted(nlp_articles.items()), 1):
+        for index, (article_id, content, content_hash, signature) in enumerate(pending, 1):
             frequencies, cached = get_frequencies(content, cache)
             cache_hits += int(cached)
             count = sum(frequencies.values())
             total_tokens += count
             empty_articles += int(not frequencies)
-            token_rows.extend((article_id, token, frequency)
-                              for token, frequency in frequencies.items())
-            print(f"[{index}/{len(nlp_articles)}] Tokens: {count} | "
-                  f"Unique: {len(frequencies)} | Cache: {cached}", flush=True)
+            token_rows.extend((article_id, token, frequency) for token, frequency in frequencies.items())
+            processing_rows.append((article_id, content_hash, signature))
+            print(f"[{index}/{len(pending)}] Token: {count} | Cache: {cached}", flush=True)
     print('NLP selesai. Membuka koneksi baru untuk menyimpan hasil...', flush=True)
-    save_results(articles, existing, valid_rows, token_rows)
+    save_results(articles, existing, changed_rows, token_rows, processing_rows)
     print('TRANSFORM SILVER BERHASIL', flush=True)
-    print(f'Artikel valid: {len(valid_rows)} | Ditolak: {rejected}')
+    print(f'Artikel valid: {len(valid_rows)} | Ditolak: {len(rejected_rows)}')
     print(f'Token: {total_tokens} | Baris token: {len(token_rows)}')
     print(f'Artikel tanpa token: {empty_articles} | Cache hit: {cache_hits}')
 

@@ -105,6 +105,10 @@ def main():
                     year = EXCLUDED.year,
                     day_name = EXCLUDED.day_name,
                     month_name = EXCLUDED.month_name
+                WHERE (gold.dim_date.full_date, gold.dim_date.day, gold.dim_date.month,
+                       gold.dim_date.year, gold.dim_date.day_name, gold.dim_date.month_name)
+                IS DISTINCT FROM (EXCLUDED.full_date, EXCLUDED.day, EXCLUDED.month,
+                                  EXCLUDED.year, EXCLUDED.day_name, EXCLUDED.month_name)
                 """,
                 list(dates.values()),
                 page_size=100
@@ -206,6 +210,11 @@ def main():
                     published_hour = EXCLUDED.published_hour,
                     word_count = EXCLUDED.word_count,
                     article_count = EXCLUDED.article_count
+                WHERE (gold.fact_articles.date_id, gold.fact_articles.category_id,
+                       gold.fact_articles.author_id, gold.fact_articles.published_hour,
+                       gold.fact_articles.word_count, gold.fact_articles.article_count)
+                IS DISTINCT FROM (EXCLUDED.date_id, EXCLUDED.category_id, EXCLUDED.author_id,
+                                  EXCLUDED.published_hour, EXCLUDED.word_count, EXCLUDED.article_count)
                 """,
                 fact_rows,
                 page_size=100
@@ -213,10 +222,13 @@ def main():
 
             # 6. KEYWORD SILVER -> GOLD
 
-            # Hapus keyword lama agar hasil Gold
-            # sesuai dengan preprocessing terbaru.
+            # Hapus hanya keyword yang sudah tidak ada pada Silver.
             cursor.execute("""
-                DELETE FROM gold.article_keywords
+                DELETE FROM gold.article_keywords g
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM silver.article_tokens s
+                    WHERE s.article_id = g.article_id AND s.token = g.keyword
+                )
             """)
 
             cursor.execute("""
@@ -232,6 +244,14 @@ def main():
                 FROM silver.article_tokens s
                 INNER JOIN gold.fact_articles f
                     ON s.article_id = f.article_id
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM gold.article_keywords g
+                    WHERE g.article_id = s.article_id AND g.keyword = s.token
+                      AND g.frequency = s.frequency
+                )
+                ON CONFLICT (article_id, keyword) DO UPDATE SET
+                    frequency = EXCLUDED.frequency,
+                    processed_at = CURRENT_TIMESTAMP
             """)
 
             # 7. VERIFIKASI

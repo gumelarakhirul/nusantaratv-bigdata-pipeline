@@ -1,6 +1,7 @@
 """Menyiapkan kredensial dari lingkungan container sebelum memulai Airflow."""
 import json
 import os
+import sys
 from pathlib import Path
 from urllib.parse import quote
 
@@ -49,8 +50,10 @@ def sync_database_password(environ):
 # Menyiapkan konfigurasi lalu menjalankan Airflow standalone.
 def main():
     configure(os.environ)
-    sync_database_password(os.environ)
-    os.execvp('airflow', ['airflow', 'standalone'])
+    arguments = sys.argv[1:]
+    if not arguments:
+        sync_database_password(os.environ)
+    os.execvp('airflow', ['airflow', *(arguments or ['standalone'])])
 
 
 if __name__ == "__main__":

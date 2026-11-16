@@ -63,3 +63,6 @@ standalone_admin_password.txt
 
 # Perangkat Node jika Neon CLI digunakan kembali
 node_modules/
+
+# Paket Tableau berisi salinan dataset lokal.
+*.twbx

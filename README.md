@@ -92,6 +92,10 @@ dilewati; total data dapat bertambah pada run berikutnya. Pengambilan ini tidak
 menjamin seluruh publikasi situs tercakup. Tabel yang sudah ada tidak dihapus
 saat inisialisasi; perubahan struktur tabel lama memerlukan migrasi tersendiri.
 
+Silver hanya memperbarui artikel yang berubah. NLP dijalankan jika isi atau
+aturan preprocessing berubah. Statusnya disimpan di `silver.article_processing`.
+Gold juga mempertahankan data yang tidak berubah.
+
 ## 4. Buka hasil di Tableau
 
 Pipeline menghasilkan:
@@ -131,8 +135,8 @@ Perintah pemeriksaan:
 
 ```powershell
 docker compose ps
-docker compose exec airflow airflow dags list-import-errors
-docker compose exec airflow airflow dags list
+docker compose exec airflow python /opt/project/config/start_airflow.py dags list-import-errors
+docker compose exec airflow python /opt/project/config/start_airflow.py dags list
 ```
 
 Untuk menghentikan layanan tanpa menghapus data:
@@ -195,3 +199,13 @@ DAG di atas untuk memverifikasi import pada lingkungan yang menjalankannya.
 
 Proyek ini dibuat untuk pendidikan. Konten berita merupakan milik penerbitnya;
 pengambilan data perlu mengikuti kebijakan akses situs.
+
+## Pengujian dasar
+
+Setelah memasang `requirements.txt`, jalankan:
+
+```powershell
+python -B -m unittest discover -s tests -v
+```
+
+Pengujian memeriksa parser, NLP, cache SQLite, dan pemilihan artikel yang berubah.

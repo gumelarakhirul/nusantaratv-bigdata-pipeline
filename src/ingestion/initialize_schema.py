@@ -6,6 +6,7 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 DDL_FILES = [
     "staging/01_create_schemas.sql", "staging/02_create_articles.sql",
     "silver/01_create_articles.sql", "silver/02_create_article_tokens.sql",
+    "silver/03_create_article_processing.sql",
     "gold/01_create_star_schema.sql", "gold/03_create_article_keywords.sql",
 ]
 
