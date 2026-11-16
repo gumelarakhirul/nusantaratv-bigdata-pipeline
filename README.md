@@ -199,13 +199,3 @@ DAG di atas untuk memverifikasi import pada lingkungan yang menjalankannya.
 
 Proyek ini dibuat untuk pendidikan. Konten berita merupakan milik penerbitnya;
 pengambilan data perlu mengikuti kebijakan akses situs.
-
-## Pengujian dasar
-
-Setelah memasang `requirements.txt`, jalankan:
-
-```powershell
-python -B -m unittest discover -s tests -v
-```
-
-Pengujian memeriksa parser, NLP, cache SQLite, dan pemilihan artikel yang berubah.
