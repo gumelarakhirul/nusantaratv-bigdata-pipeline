@@ -80,15 +80,18 @@ asli yang sudah dirapikan tetap disimpan untuk dibaca; token hasil preprocessing
 disimpan terpisah di `silver.article_tokens`.
 
 Transformasi Silver membaca snapshot lalu menutup koneksi sebelum menjalankan
-NLP. Hasil NLP disimpan di satu file SQLite `data/processed/nlp_cache.sqlite3` berdasarkan konten,
-konfigurasi/algoritma NLP, dan versi Sastrawi, sehingga konten yang tidak berubah tidak perlu diproses
-ulang. Setelah NLP selesai, koneksi baru menyimpan artikel dan token dalam satu
-transaksi. Jika sumber berubah selama NLP, task gagal untuk diulang dengan
-snapshot baru. File cache boleh dihapus saat task tidak aktif; hasilnya akan dihitung
-ulang. Jangan mengubah isi cache secara manual.
+NLP. Artikel dengan isi dan aturan NLP yang sama dilewati berdasarkan status
+`silver.article_processing`; hasil NLP tersimpan di Neon tanpa cache SQLite.
+Setelah NLP selesai, koneksi baru menyimpan perubahan dalam satu transaksi.
+Jika sumber berubah selama NLP, task gagal untuk diulang dengan snapshot baru.
 
-Crawler mengambil maksimal 200 URL per run. Artikel detail yang sudah tersimpan
-dilewati; total data dapat bertambah pada run berikutnya. Pengambilan ini tidak
+Crawler mencari maksimal **100 artikel yang belum tersimpan per run** dengan
+membandingkan ID dari staging Neon dan checkpoint JSON lokal. URL lama dilewati
+sambil melanjutkan pagination, maksimal 100 batch dengan jeda permintaan.
+Target bisa kurang dari 100 jika batas pencarian atau akhir pagination tercapai;
+jumlah yang masuk database juga bergantung pada keberhasilan scraping dan validasi.
+Artikel yang belum tersimpan dapat berasal dari tanggal terbit sebelumnya.
+Jika tidak ada URL baru, data lama tetap dipakai untuk tahap berikutnya. Pengambilan ini tidak
 menjamin seluruh publikasi situs tercakup. Tabel yang sudah ada tidak dihapus
 saat inisialisasi; perubahan struktur tabel lama memerlukan migrasi tersendiri.
 
@@ -169,13 +172,10 @@ tidak otomatis membagikan dashboard Airflow maupun CSV lokal.
 | `docker/airflow.Dockerfile` | Image Airflow beserta dependensi pipeline. |
 | `docker/requirements-airflow.txt` | Dependensi Python di container. |
 | `requirements.txt` | Dependensi jika menjalankan script lewat Python lokal. |
-| `src/crawling/crawler.py` | Mengumpulkan URL artikel. |
-| `src/crawling/article_parser.py` | Mengambil isi dan metadata dari HTML artikel. |
-| `src/crawling/scrape_details.py` | Scraping detail, retry, checkpoint, dan catatan error. |
+| `src/crawling/crawler.py` | Mengumpulkan URL, membaca HTML, mengambil detail, retry, dan checkpoint. |
 | `src/ingestion/initialize_schema.py` | Membuat schema dan tabel yang belum ada. |
 | `src/ingestion/ingest_articles.py` | Memvalidasi Bronze dan mengisi staging. |
 | `src/transformation/transform_silver.py` | Preprocessing field artikel dan teks NLP dalam satu task Silver. |
-| `src/transformation/nlp_cache.py` | Menyimpan dan membaca cache hasil NLP di SQLite lokal. |
 | `src/transformation/transform_gold.py` | Mengisi dimensi, fakta, dan keyword Gold. |
 | `src/analytics/export_analytics.py` | Validasi warehouse dan ekspor CSV. |
 | `sql/staging/` | DDL schema dan tabel staging. |

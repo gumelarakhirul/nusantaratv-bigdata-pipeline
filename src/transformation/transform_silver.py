@@ -21,7 +21,6 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BASE_DIR))
 
 from config.database import get_connection
-from src.transformation.nlp_cache import NLPCache
 
 
 # KONFIGURASI NLP
@@ -239,8 +238,7 @@ SILVER_QUERY = """
     FROM silver.articles s LEFT JOIN silver.article_processing p USING (article_id)
     ORDER BY s.article_id
 """
-CACHE_PATH = BASE_DIR / 'data' / 'processed' / 'nlp_cache.sqlite3'
-# Perbarui identitas cache hanya jika algoritma, konfigurasi NLP, atau Sastrawi berubah.
+# Tandai perubahan algoritma, konfigurasi NLP, atau versi Sastrawi.
 NLP_SIGNATURE = hashlib.sha256((
     "\n".join(ast.dump(ast.parse(inspect.getsource(function))) for function in (
         case_folding, clean_nlp_text, tokenize, normalize_tokens, remove_stopwords,
@@ -249,17 +247,6 @@ NLP_SIGNATURE = hashlib.sha256((
     + json.dumps(NORMALIZATION_MAP, sort_keys=True, ensure_ascii=False)
     + str(MIN_WORD_LENGTH) + version("Sastrawi")
 ).encode("utf-8")).hexdigest()
-
-
-# Mengambil cache atau menghitung frekuensi token baru.
-def get_frequencies(content, cache):
-    key = hashlib.sha256((NLP_SIGNATURE + content).encode('utf-8')).hexdigest()
-    frequencies = cache.get(key)
-    if frequencies is not None:
-        return (frequencies, True)
-    frequencies = Counter(preprocess(content))
-    cache.put(key, frequencies)
-    return (frequencies, False)
 
 
 # Membaca salinan konsisten staging dan Silver lalu menutup koneksi.
@@ -306,7 +293,7 @@ def save_results(articles, existing, valid_rows, token_rows, processing_rows):
             current_articles = cursor.fetchall()
             cursor.execute(SILVER_QUERY)
             if current_articles != articles or cursor.fetchall() != existing:
-                raise RuntimeError("Data sumber berubah selama NLP; ulangi task. Cache NLP tetap tersedia.")
+                raise RuntimeError("Data sumber berubah selama NLP; ulangi task. ")
             execute_batch(cursor, """
                 INSERT INTO silver.articles (
                     article_id,
@@ -390,23 +377,21 @@ def main():
         return
     print("Koneksi baca ditutup. NLP berjalan tanpa koneksi Neon.", flush=True)
     token_rows, processing_rows = [], []
-    total_tokens = empty_articles = cache_hits = 0
-    with NLPCache(CACHE_PATH) as cache:
-        for index, (article_id, content, content_hash, signature) in enumerate(pending, 1):
-            frequencies, cached = get_frequencies(content, cache)
-            cache_hits += int(cached)
-            count = sum(frequencies.values())
-            total_tokens += count
-            empty_articles += int(not frequencies)
-            token_rows.extend((article_id, token, frequency) for token, frequency in frequencies.items())
-            processing_rows.append((article_id, content_hash, signature))
-            print(f"[{index}/{len(pending)}] Token: {count} | Cache: {cached}", flush=True)
+    total_tokens = empty_articles = 0
+    for index, (article_id, content, content_hash, signature) in enumerate(pending, 1):
+        frequencies = Counter(preprocess(content))
+        count = sum(frequencies.values())
+        total_tokens += count
+        empty_articles += int(not frequencies)
+        token_rows.extend((article_id, token, frequency) for token, frequency in frequencies.items())
+        processing_rows.append((article_id, content_hash, signature))
+        print(f"[{index}/{len(pending)}] Token: {count}", flush=True)
     print('NLP selesai. Membuka koneksi baru untuk menyimpan hasil...', flush=True)
     save_results(articles, existing, changed_rows, token_rows, processing_rows)
     print('TRANSFORM SILVER BERHASIL', flush=True)
     print(f'Artikel valid: {len(valid_rows)} | Ditolak: {len(rejected_rows)}')
     print(f'Token: {total_tokens} | Baris token: {len(token_rows)}')
-    print(f'Artikel tanpa token: {empty_articles} | Cache hit: {cache_hits}')
+    print(f'Artikel tanpa token: {empty_articles}')
 
 
 if __name__ == "__main__":

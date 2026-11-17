@@ -41,8 +41,8 @@ def make_dag(dag_id, modules, downstream=None, schedule=None):
 
 # Tunggu seluruh rangkaian selesai sebelum crawling berikutnya menimpa Bronze.
 crawling = make_dag("ntv_01_crawling", [
-    ("collect_urls", "src.crawling.crawler"),
-    ("scrape_details", "src.crawling.scrape_details"),
+    ("collect_urls", "src.crawling.crawler collect_urls"),
+    ("scrape_details", "src.crawling.crawler scrape_details"),
 ], "ntv_02_ingestion", "0 7 * * *")
 ingestion = make_dag("ntv_02_ingestion", [
     ("initialize_schema", "src.ingestion.initialize_schema"),
