@@ -5,7 +5,7 @@ Apache Airflow, PostgreSQL Neon, dan Tableau. Pengambilan data menggunakan
 Requests dan BeautifulSoup.
 
 ```text
-Website ? JSON Bronze ? Staging ? Silver ? Gold ? CSV ? Tableau
+Website -> JSON Bronze -> Staging -> Silver -> Gold -> CSV -> Tableau
                            PostgreSQL Neon
 ```
 
@@ -35,15 +35,15 @@ cd nusantaratv-bigdata
    `AIRFLOW_UI_PORT` pada `.env`.
 4. Login dengan username **admin** dan password dari `AIRFLOW_ADMIN_PASSWORD`.
 5. Buka menu **Dags**, lalu aktifkan atau unpause keempat DAG.
-6. Pastikan tidak ada rangkaian yang sedang berjalan. Klik **?** pada
+6. Pastikan tidak ada rangkaian yang sedang berjalan. Klik tombol **Trigger (ikon segitiga)** pada
    **ntv_01_crawling**, pilih **Single Run**, lalu klik **Trigger**.
 7. Tunggu seluruh rangkaian berstatus **Success**.
 
 | DAG | Task | Hasil |
 |---|---|---|
-| `ntv_01_crawling` | `collect_urls` ? `scrape_details` | Daftar URL dan detail artikel dalam JSON. |
-| `ntv_02_ingestion` | `initialize_schema` ? `ingest_articles` | Struktur tabel dan artikel pada staging Neon. |
-| `ntv_03_transformation` | `transform_silver` ? `transform_gold` | Artikel bersih, token NLP, dimensi, fakta, dan keyword. |
+| `ntv_01_crawling` | `collect_urls` -> `scrape_details` | Daftar URL dan detail artikel dalam JSON. |
+| `ntv_02_ingestion` | `initialize_schema` -> `ingest_articles` | Struktur tabel dan artikel pada staging Neon. |
+| `ntv_03_transformation` | `transform_silver` -> `transform_gold` | Artikel bersih, token NLP, dimensi, fakta, dan keyword. |
 | `ntv_04_analytics` | `validate_and_export` | Dua CSV untuk Tableau. |
 
 DAG pertama memicu DAG berikutnya secara berurutan. Status **Deferred** pada
@@ -85,7 +85,7 @@ berdasarkan ID artikel.
 **Silver** merapikan field artikel sekaligus menjalankan preprocessing NLP:
 
 ```text
-Case Folding ? RegEx ? Tokenisasi ? Normalisasi ? Stemming ? Stopword Removal
+Case Folding -> RegEx -> Tokenisasi -> Normalisasi -> Stemming -> Stopword Removal
 ```
 
 Normalisasi menggunakan kamus `NORMALIZATION_MAP` di `transform_silver.py`.
@@ -125,8 +125,8 @@ kedua koneksi ke CSV pada folder `data/processed` di laptop yang digunakan.
 
 Untuk menampilkan hasil ekspor terbaru, refresh kedua sumber data:
 
-- **Data ? nusantaratv_analytics ? Refresh**
-- **Data ? nusantaratv_keywords ? Refresh**
+- **Data -> nusantaratv_analytics -> Refresh**
+- **Data -> nusantaratv_keywords -> Refresh**
 
 Ekspor CSV berjalan otomatis melalui Airflow. Refresh Tableau dilakukan manual.
 Workbook membutuhkan kedua CSV tersebut. Folder data tidak disertakan dalam Git.
@@ -166,17 +166,6 @@ dikelola Compose.
 Jika Pylance pada Windows menandai import Airflow atau Pendulum tidak ditemukan,
 periksa import melalui container menggunakan perintah di atas. Dependensi
 Airflow tersedia di lingkungan Docker.
-
-## Pemakaian bersama tim
-
-Anggota tim dapat menggunakan database Neon yang sama dengan kredensial akses
-yang sesuai. Gunakan **satu Airflow utama** untuk menjalankan jadwal pipeline
-pada warehouse bersama.
-
-CSV tersimpan di laptop yang menjalankan exporter. Bagikan kedua CSV terbaru
-kepada anggota yang membuka Tableau, atau ekspor dari Neon pada laptop tersebut.
-Akses database yang sama tidak otomatis membagikan CSV lokal atau dashboard
-Airflow.
 
 ## Struktur proyek
 
