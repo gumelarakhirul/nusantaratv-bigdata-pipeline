@@ -89,6 +89,8 @@ Case Folding -> RegEx -> Tokenisasi -> Normalisasi -> Stemming -> Stopword Remov
 ```
 
 Normalisasi menggunakan kamus `NORMALIZATION_MAP` di `transform_silver.py`.
+Stopword memakai daftar Sastrawi dan `custom_stopwords`, termasuk bentuk hasil
+stemming yang terlalu umum untuk keyword topik berita.
 Artikel yang sudah dirapikan disimpan pada `silver.articles`, sedangkan token
 dan frekuensinya pada `silver.article_tokens`.
 

@@ -36,7 +36,10 @@ custom_stopwords = {
     "jadi", "laku", "lalu", "hingga",
     "lebih", "butuh", "jumlah",
     "nusantaratv", "com", "www",
-    "baca", "artikel", "berita"
+    "baca", "artikel", "berita",
+    # Bentuk hasil stemming yang terlalu umum untuk keyword topik berita.
+    "bagai", "cara", "hadap", "turut", "sama",
+    "beri", "milik", "nyata", "lanjut", "pihak"
 }
 
 stopwords.update(custom_stopwords)
